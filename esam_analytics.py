@@ -1,7 +1,6 @@
 import streamlit as st
 import psycopg2
 import hashlib
-import pandas as pd
 
 # Configuración inicial de la página
 st.set_page_config(page_title="ESAM Analytics", page_icon="📊", layout="wide")
@@ -103,8 +102,8 @@ else:
         
     # Vistas según la selección del menú
     if menu_seleccionado == "Dashboard Unificado":
-        st.title("📊 Panel Principal - Ganancias y Métricas")
-        st.write("Vista simultánea de Béisbol y Básquetbol.")
+        st.title("📊 Panel Principal - Ganancias y Métricas Unificadas")
+        st.write("Vista simultánea del desempeño y ganancias de Béisbol y Básquetbol.")
         
         # Tarjetas métricas lado a lado
         col_b1, col_b2, col_b3 = st.columns(3)
@@ -116,7 +115,7 @@ else:
             st.metric(label="💰 Total Acumulado", value="$0.00", delta="General")
             
         st.divider()
-        st.info("💡 Este panel se alimenta en tiempo real de tu base de datos en Neon PostgreSQL.")
+        st.info("💡 Este panel refleja en tiempo real el acumulado de ambas disciplinas.")
 
     elif menu_seleccionado == "Registro de Actividad":
         st.title("📝 Módulo de Registro")
@@ -124,9 +123,9 @@ else:
 
     elif menu_seleccionado == "Gestión de Usuarios (Admin)":
         st.title("⚙️ Administración de Accesos y Contraseñas")
-        st.write("Herramienta exclusiva del Administrador para gestionar cuentas de usuarios y restablecer credenciales.")
+        st.write("Herramienta exclusiva del Administrador para gestionar cuentas y restablecer contraseñas.")
         
-        tab_cambio, tab_crear = st.tabs(["Cambiar Contraseña", "Crear Nuevo Usuario"])
+        tab_cambio, tab_crear = st.tabs(["Cambiar / Restablecer Contraseña", "Crear Nuevo Usuario"])
         
         with tab_cambio:
             st.subheader("Restablecer Contraseña")
