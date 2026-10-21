@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS profesionales avanzados (Diseño visual moderno tipo tarjeta corporativa)
+# Estilos CSS profesionales avanzados (Diseño visual corporativo y limpio)
 st.markdown("""
     <style>
     .main-header {
@@ -56,7 +56,7 @@ if 'password_sistema' not in st.session_state:
     st.session_state.password_sistema = "esam2026"
 
 if 'juegos_registrados' not in st.session_state:
-    # Base de datos inicial de ejemplo
+    # Base de datos inicial de ejemplo con especificaciones por deporte
     st.session_state.juegos_registrados = pd.DataFrame([
         {
             "ID Juego": "GAME-001",
@@ -65,6 +65,7 @@ if 'juegos_registrados' not in st.session_state:
             "Equipo Local": "Leones del Caracas",
             "Equipo Visitante": "Navegantes del Magallanes",
             "Picheos/Eventos": 285,
+            "Detalle Técnico": "Pitch logging completo, conteo de lanzamientos y strikes",
             "Monto USD": round(285 * 0.024, 3),
             "Estado": "Completado"
         },
@@ -75,6 +76,7 @@ if 'juegos_registrados' not in st.session_state:
             "Equipo Local": "Lakers",
             "Equipo Visitante": "Celtics",
             "Picheos/Eventos": 310,
+            "Detalle Técnico": "Synergy tracking de posesiones, tiros y jugadas",
             "Monto USD": round(310 * 0.024, 3),
             "Estado": "Completado"
         }
@@ -111,6 +113,8 @@ opcion_menu = st.sidebar.radio(
     [
         "📊 Panel General y Ganancias", 
         "📝 Registrar Juego", 
+        "⚾ Béisbol: Análisis y Registros", 
+        "🏀 Básquetbol: Análisis y Registros", 
         "📈 Métricas y Filtros", 
         "🔍 Búsqueda Avanzada", 
         "🔐 Seguridad y Credenciales",
@@ -126,7 +130,7 @@ st.sidebar.info(f"Tarifa activa: **${st.session_state.tarifa_global} USD** / eve
 # ==========================================
 if opcion_menu == "📊 Panel General y Ganancias":
     st.markdown('<p class="main-header">Panel de Control y Ganancias</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Marcador global consolidado de rendimiento financiero y jornadas analizadas</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Marcador global consolidado de rendimiento financiero y jornadas analizadas en ambos deportes</p>', unsafe_allow_html=True)
     
     df = st.session_state.juegos_registrados
     
@@ -172,7 +176,7 @@ if opcion_menu == "📊 Panel General y Ganancias":
 # ==========================================
 elif opcion_menu == "📝 Registrar Juego":
     st.markdown('<p class="main-header">Registro de Nuevo Juego</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Ingresa los datos técnicos y de conteo de la jornada analizada</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Ingresa los datos técnicos, conteo y especificaciones del deporte analizado</p>', unsafe_allow_html=True)
 
     with st.form("form_registro_juego", clear_on_submit=True):
         col_f1, col_f2 = st.columns(2)
@@ -185,6 +189,8 @@ elif opcion_menu == "📝 Registrar Juego":
             picheos_eventos = st.number_input("Cantidad de Picheos / Eventos", min_value=1, value=250, step=1)
             equipo_visitante = st.text_input("Equipo Visitante", placeholder="Ej: Navegantes del Magallanes")
 
+        detalle_tecnico = st.text_area("Especificaciones / Notas Técnicas del Partido", placeholder="Ej: Cobertura completa de lanzamientos, verificación de jugadas con Synergy...")
+
         monto_calculado = calcular_pago(picheos_eventos)
         st.info(f"💵 **Monto estimado a cobrar:** ${monto_calculado:.3f} USD (Calculado a${st.session_state.tarifa_global} por unidad)")
 
@@ -192,7 +198,7 @@ elif opcion_menu == "📝 Registrar Juego":
 
         if btn_guardar:
             if not id_juego.strip() or not equipo_local.strip() or not equipo_visitante.strip():
-                st.error("Por favor completa todos los campos requeridos.")
+                st.error("Por favor completa todos los campos obligatorios.")
             else:
                 nuevo_juego = {
                     "ID Juego": id_juego.upper(),
@@ -201,6 +207,7 @@ elif opcion_menu == "📝 Registrar Juego":
                     "Equipo Local": equipo_local,
                     "Equipo Visitante": equipo_visitante,
                     "Picheos/Eventos": int(picheos_eventos),
+                    "Detalle Técnico": detalle_tecnico if detalle_tecnico else "Sin especificaciones adicionales",
                     "Monto USD": monto_calculado,
                     "Estado": "Completado"
                 }
@@ -211,7 +218,53 @@ elif opcion_menu == "📝 Registrar Juego":
                 st.success(f"✅ ¡Juego {id_juego.upper()} registrado exitosamente! Monto: ${monto_calculado:.2f} USD.")
 
 # ==========================================
-# MÓDULO 3: MÉTRICAS Y FILTROS
+# MÓDULO 3: BÉISBOL (ESPECIFICACIONES)
+# ==========================================
+elif opcion_menu == "⚾ Béisbol: Análisis y Registros":
+    st.markdown('<p class="main-header">Módulo Especializado en Béisbol</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Gestión exclusiva, estadísticas y registros específicos de partidos de béisbol</p>', unsafe_allow_html=True)
+
+    df = st.session_state.juegos_registrados
+    df_beisbol = df[df["Deporte"] == "Béisbol"] if not df.empty else pd.DataFrame()
+
+    if not df_beisbol.empty:
+        col_b1, col_b2 = st.columns(2)
+        with col_b1:
+            st.metric("Total Juegos de Béisbol", len(df_beisbol))
+        with col_b2:
+            gan_beisbol = float(df_beisbol["Monto USD"].sum())
+            st.metric("Ingresos Generados (Béisbol)", f"${gan_beisbol:,.2f} USD")
+
+        st.markdown("### 📋 Listado de Partidos de Béisbol Analizados")
+        st.dataframe(df_beisbol, use_container_width=True)
+    else:
+        st.info("No hay registros de béisbol almacenados actualmente en el sistema.")
+
+# ==========================================
+# MÓDULO 4: BÁSQUETBOL (ESPECIFICACIONES)
+# ==========================================
+elif opcion_menu == "🏀 Básquetbol: Análisis y Registros":
+    st.markdown('<p class="main-header">Módulo Especializado en Básquetbol</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Gestión exclusiva, seguimiento de posesiones y registros de básquetbol</p>', unsafe_allow_html=True)
+
+    df = st.session_state.juegos_registrados
+    df_basquet = df[df["Deporte"] == "Básquetbol"] if not df.empty else pd.DataFrame()
+
+    if not df_basquet.empty:
+        col_bk1, col_bk2 = st.columns(2)
+        with col_bk1:
+            st.metric("Total Juegos de Básquetbol", len(df_basquet))
+        with col_bk2:
+            gan_basquet = float(df_basquet["Monto USD"].sum())
+            st.metric("Ingresos Generados (Básquetbol)", f"${gan_basquet:,.2f} USD")
+
+        st.markdown("### 📋 Listado de Partidos de Básquetbol Analizados")
+        st.dataframe(df_basquet, use_container_width=True)
+    else:
+        st.info("No hay registros de básquetbol almacenados actualmente en el sistema.")
+
+# ==========================================
+# MÓDULO 5: MÉTRICAS Y FILTROS
 # ==========================================
 elif opcion_menu == "📈 Métricas y Filtros":
     st.markdown('<p class="main-header">Métricas y Ganancias por Periodo</p>', unsafe_allow_html=True)
@@ -252,7 +305,7 @@ elif opcion_menu == "📈 Métricas y Filtros":
         st.info("No hay registros disponibles para procesar métricas.")
 
 # ==========================================
-# MÓDULO 4: BÚSQUEDA AVANZADA
+# MÓDULO 6: BÚSQUEDA AVANZADA
 # ==========================================
 elif opcion_menu == "🔍 Búsqueda Avanzada":
     st.markdown('<p class="main-header">Búsqueda Rápida de Registros</p>', unsafe_allow_html=True)
@@ -274,7 +327,7 @@ elif opcion_menu == "🔍 Búsqueda Avanzada":
         st.warning("No hay registros disponibles para realizar búsquedas.")
 
 # ==========================================
-# MÓDULO 5: SEGURIDAD Y CREDENCIALES
+# MÓDULO 7: SEGURIDAD Y CREDENCIALES
 # ==========================================
 elif opcion_menu == "🔐 Seguridad y Credenciales":
     st.markdown('<p class="main-header">Gestión de Seguridad y Claves</p>', unsafe_allow_html=True)
@@ -306,7 +359,7 @@ elif opcion_menu == "🔐 Seguridad y Credenciales":
         """)
 
 # ==========================================
-# MÓDULO 6: CONFIGURACIÓN
+# MÓDULO 8: CONFIGURACIÓN
 # ==========================================
 elif opcion_menu == "⚙️ Configuración":
     st.markdown('<p class="main-header">Configuración del Sistema</p>', unsafe_allow_html=True)
@@ -326,6 +379,6 @@ elif opcion_menu == "⚙️ Configuración":
     st.markdown("### ⚠️ Zona de Mantenimiento")
     if st.button("🗑️ Vaciar y Eliminar Todos los Registros"):
         st.session_state.juegos_registrados = pd.DataFrame(columns=[
-            "ID Juego", "Fecha", "Deporte", "Equipo Local", "Equipo Visitante", "Picheos/Eventos", "Monto USD", "Estado"
+            "ID Juego", "Fecha", "Deporte", "Equipo Local", "Equipo Visitante", "Picheos/Eventos", "Detalle Técnico", "Monto USD", "Estado"
         ])
         st.warning("Se han eliminado todos los registros almacenados en la base de datos temporal.")
