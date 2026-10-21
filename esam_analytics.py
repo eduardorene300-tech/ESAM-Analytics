@@ -97,10 +97,17 @@ def init_db():
                 );
             """)
 
-            # Migraciones automáticas seguras si las tablas ya existían previamente
+            # Migraciones automáticas seguras para ajustar estructuras antiguas en la BD
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
+            
+            # Si existe la columna 'password' heredada, remover la restricción NOT NULL
+            try:
+                cur.execute("ALTER TABLE usuarios ALTER COLUMN password DROP NOT NULL;")
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
 
             # Tabla de Partidos (Básquetbol)
             cur.execute("""
@@ -136,7 +143,7 @@ def init_db():
                 );
             """)
 
-            # Valores por defecto
+            # Valores por defecto de configuración
             defaults = [
                 ("tasa_tramo_1", 6.00),
                 ("tasa_tramo_2", 6.50),
@@ -153,13 +160,22 @@ def init_db():
                     ON CONFLICT (clave) DO NOTHING;
                 """, (clave, val))
 
-            # Crear usuario admin por defecto si no existe
+            # Crear usuario admin por defecto contemplando ambas columnas
             admin_hash = hash_password("admin123")
-            cur.execute("""
-                INSERT INTO usuarios (username, nombre, password_hash, rol)
-                VALUES ('admin', 'Administrador Global', %s, 'admin')
-                ON CONFLICT (username) DO NOTHING;
-            """, (admin_hash,))
+            try:
+                cur.execute("""
+                    INSERT INTO usuarios (username, nombre, password_hash, rol)
+                    VALUES ('admin', 'Administrador Global', %s, 'admin')
+                    ON CONFLICT (username) DO NOTHING;
+                """, (admin_hash,))
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO usuarios (username, nombre, password, password_hash, rol)
+                    VALUES ('admin', 'Administrador Global', 'admin123', %s, 'admin')
+                    ON CONFLICT (username) DO NOTHING;
+                """, (admin_hash,))
 
             conn.commit()
             cur.close()
@@ -247,10 +263,18 @@ def registrar_usuario(username, nombre, password, rol="operador"):
         try:
             cur = conn.cursor()
             pwd_hash = hash_password(password)
-            cur.execute("""
-                INSERT INTO usuarios (username, nombre, password_hash, rol)
-                VALUES (%s, %s, %s, %s);
-            """, (username.lower().strip(), nombre.strip(), pwd_hash, rol))
+            try:
+                cur.execute("""
+                    INSERT INTO usuarios (username, nombre, password_hash, rol)
+                    VALUES (%s, %s, %s, %s);
+                """, (username.lower().strip(), nombre.strip(), pwd_hash, rol))
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+                cur.execute("""
+                    INSERT INTO usuarios (username, nombre, password, password_hash, rol)
+                    VALUES (%s, %s, %s, %s, %s);
+                """, (username.lower().strip(), nombre.strip(), password, pwd_hash, rol))
             conn.commit()
             cur.close()
             conn.close()
@@ -270,8 +294,8 @@ def autenticar_usuario(username, password):
             pwd_hash = hash_password(password)
             cur.execute("""
                 SELECT id, username, nombre, rol FROM usuarios
-                WHERE username = %s AND password_hash = %s;
-            """, (username.lower().strip(), pwd_hash))
+                WHERE username = %s AND (password_hash = %s OR password = %s);
+            """, (username.lower().strip(), pwd_hash, password))
             user = cur.fetchone()
             cur.close()
             conn.close()
