@@ -77,7 +77,7 @@ def get_db_connection():
 
 
 # =========================================================
-# 4. INICIALIZACIÓN Y MIGRACIÓN DE TABLAS GLOBALES
+# 4. INICIALIZACIÓN Y MIGRACIÓN AUTOMÁTICA DE TABLAS
 # =========================================================
 @st.cache_resource
 def init_db():
@@ -97,8 +97,9 @@ def init_db():
                 );
             """)
 
-            # Asegurar que columnas clave existan si la tabla ya fue creada previamente
+            # Migraciones automáticas seguras si las tablas ya existían previamente
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
 
             # Tabla de Partidos (Básquetbol)
@@ -726,4 +727,8 @@ else:
                     if not user_verif:
                         st.error("❌ La contraseña actual es incorrecta.")
                     else:
-                        exito_c, msg_c = cambiar_password_
+                        exito_c, msg_c = cambiar_password_usuario(user_id, pass_nueva)
+                        if exito_c:
+                            st.success(msg_c)
+                        else:
+                            st.error(msg_c)
