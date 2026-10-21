@@ -97,12 +97,11 @@ def init_db():
                 );
             """)
 
-            # Migraciones automáticas seguras para ajustar estructuras antiguas en la BD
+            # Migraciones automáticas seguras para ajustar estructuras antiguas
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
             
-            # Si existe la columna 'password' heredada, remover la restricción NOT NULL
             try:
                 cur.execute("ALTER TABLE usuarios ALTER COLUMN password DROP NOT NULL;")
             except Exception:
@@ -160,13 +159,15 @@ def init_db():
                     ON CONFLICT (clave) DO NOTHING;
                 """, (clave, val))
 
-            # Crear usuario admin por defecto contemplando ambas columnas
+            # FORZAR RESETEO DE CONTRASEÑA DE ADMIN A 'admin123'
             admin_hash = hash_password("admin123")
             try:
                 cur.execute("""
                     INSERT INTO usuarios (username, nombre, password_hash, rol)
                     VALUES ('admin', 'Administrador Global', %s, 'admin')
-                    ON CONFLICT (username) DO NOTHING;
+                    ON CONFLICT (username) DO UPDATE 
+                    SET password_hash = EXCLUDED.password_hash,
+                        rol = 'admin';
                 """, (admin_hash,))
             except Exception:
                 conn.rollback()
@@ -174,7 +175,10 @@ def init_db():
                 cur.execute("""
                     INSERT INTO usuarios (username, nombre, password, password_hash, rol)
                     VALUES ('admin', 'Administrador Global', 'admin123', %s, 'admin')
-                    ON CONFLICT (username) DO NOTHING;
+                    ON CONFLICT (username) DO UPDATE 
+                    SET password_hash = EXCLUDED.password_hash,
+                        password = 'admin123',
+                        rol = 'admin';
                 """, (admin_hash,))
 
             conn.commit()
@@ -312,7 +316,12 @@ def cambiar_password_usuario(user_id, nueva_password):
         try:
             cur = conn.cursor()
             pwd_hash = hash_password(nueva_password)
-            cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (pwd_hash, user_id))
+            try:
+                cur.execute("UPDATE usuarios SET password_hash = %s, password = %s WHERE id = %s;", (pwd_hash, nueva_password, user_id))
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+                cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (pwd_hash, user_id))
             conn.commit()
             cur.close()
             conn.close()
@@ -369,13 +378,13 @@ if not st.session_state.authenticated:
     st.title("🏆 ESAM Analytics")
     st.caption("Plataforma Profesional de Análisis y Control Operativo (Básquetbol & Béisbol)")
 
-    tab_login, tab_registro = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario"])
+    tab_login, tab_registro, tab_reset = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario", "⚙️ Restablecer Clave Admin"])
 
     with tab_login:
         st.subheader("Ingreso de Operadores")
         with st.form("form_login"):
-            user_input = st.text_input("Usuario")
-            pass_input = st.text_input("Contraseña", type="password")
+            user_input = st.text_input("Usuario", value="admin")
+            pass_input = st.text_input("Contraseña", type="password", value="admin123")
             submit_login = st.form_submit_button("Entrar a ESAM Analytics", use_container_width=True)
 
             if submit_login:
@@ -411,6 +420,29 @@ if not st.session_state.authenticated:
                     exito, msg = registrar_usuario(reg_user, reg_name, reg_pass1, "operador")
                     if exito: st.success(msg)
                     else: st.error(msg)
+
+    with tab_reset:
+        st.subheader("Restablecer Contraseña de Admin de Emergencia")
+        st.info("Utiliza este botón para forzar el reinicio de la contraseña del usuario 'admin' a 'admin123' en la base de datos.")
+        if st.button("⚡ Forzar Reseteo de Admin a 'admin123'", use_container_width=True):
+            conn_r = get_db_connection()
+            if conn_r:
+                try:
+                    cur_r = conn_r.cursor()
+                    h_pass = hash_password("admin123")
+                    try:
+                        cur_r.execute("UPDATE usuarios SET password_hash = %s, password = 'admin123' WHERE username = 'admin';", (h_pass,))
+                    except Exception:
+                        conn_r.rollback()
+                        cur_r = conn_r.cursor()
+                        cur_r.execute("UPDATE usuarios SET password_hash = %s WHERE username = 'admin';", (h_pass,))
+                    conn_r.commit()
+                    cur_r.close()
+                    conn_r.close()
+                    st.success("✅ ¡Contraseña de 'admin' restablecida con éxito a 'admin123'! Ya puedes iniciar sesión.")
+                except Exception as e:
+                    st.error(f"Error al restablecer: {e}")
+
 else:
     # =========================================================
     # PANEL PRINCIPAL Y NAVEGACIÓN PROFESIONAL
