@@ -17,6 +17,8 @@ def inicializar_tabla_usuarios():
     try:
         conn = obtener_conexion()
         cursor = conn.cursor()
+        
+        # Crear tabla asegurando las columnas estándar exactas
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id SERIAL PRIMARY KEY,
@@ -25,6 +27,9 @@ def inicializar_tabla_usuarios():
                 rol VARCHAR(20) NOT NULL
             );
         """)
+        conn.commit()
+        
+        # Verificar si ya existe el usuario admin por defecto
         cursor.execute("SELECT COUNT(*) FROM usuarios WHERE username = 'admin';")
         count = cursor.fetchone()[0]
         if count == 0:
@@ -34,12 +39,13 @@ def inicializar_tabla_usuarios():
                 ("admin", pass_inicial, "admin")
             )
             conn.commit()
+            
         cursor.close()
         conn.close()
     except Exception as e:
-        st.error(f"Error conectando a la base de datos: {e}")
+        st.error(f"Error en la base de datos de usuarios: {e}")
 
-# Ejecutar inicialización de usuarios
+# Ejecutar inicialización
 inicializar_tabla_usuarios()
 
 # --- 2. CONTROL DE SESIÓN ---
@@ -78,9 +84,9 @@ if not st.session_state.autenticado:
                     else:
                         st.error("Usuario o contraseña incorrectos.")
                 except Exception as e:
-                    st.error(f"Error de autenticación con la base de datos: {e}")
+                    st.error(f"Error al verificar credenciales: {e}")
 else:
-    # --- 4. APLICACIÓN PRINCIPAL (UNA VEZ LOGUEADO) ---
+    # --- 4. APLICACIÓN PRINCIPAL ---
     st.sidebar.title("⚡ ESAM Analytics")
     st.sidebar.write(f"Usuario: **{st.session_state.usuario}**")
     st.sidebar.write(f"Rol: **{st.session_state.rol}**")
@@ -88,7 +94,6 @@ else:
     
     menu_opciones = ["Dashboard Unificado", "Registro de Actividad"]
     
-    # Si el usuario es administrador, agregamos la opción de gestión de cuentas
     if st.session_state.rol == "admin":
         menu_opciones.append("Gestión de Usuarios (Admin)")
         
@@ -100,12 +105,10 @@ else:
         st.session_state.rol = None
         st.rerun()
         
-    # Vistas según la selección del menú
     if menu_seleccionado == "Dashboard Unificado":
         st.title("📊 Panel Principal - Ganancias y Métricas Unificadas")
         st.write("Vista simultánea del desempeño y ganancias de Béisbol y Básquetbol.")
         
-        # Tarjetas métricas lado a lado
         col_b1, col_b2, col_b3 = st.columns(3)
         with col_b1:
             st.metric(label="⚾ Béisbol (Ganancias)", value="$0.00", delta="0 juegos")
@@ -123,7 +126,7 @@ else:
 
     elif menu_seleccionado == "Gestión de Usuarios (Admin)":
         st.title("⚙️ Administración de Accesos y Contraseñas")
-        st.write("Herramienta exclusiva del Administrador para gestionar cuentas y restablecer contraseñas.")
+        st.write("Herramienta exclusiva del Administrador para gestionar cuentas y restablecer credenciales.")
         
         tab_cambio, tab_crear = st.tabs(["Cambiar / Restablecer Contraseña", "Crear Nuevo Usuario"])
         
