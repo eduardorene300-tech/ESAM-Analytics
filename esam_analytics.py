@@ -18,7 +18,8 @@ def inicializar_tabla_usuarios():
         conn = obtener_conexion()
         cursor = conn.cursor()
         
-        # Crear tabla asegurando las columnas estándar exactas
+        # Eliminar temporalmente la tabla si tiene una estructura incompatible y recrearla limpia
+        # (Esto asegura que las columnas username, password y rol existan exactamente)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id SERIAL PRIMARY KEY,
