@@ -56,7 +56,7 @@ if 'password_sistema' not in st.session_state:
     st.session_state.password_sistema = "esam2026"
 
 if 'juegos_registrados' not in st.session_state:
-    # Base de datos inicial de ejemplo con especificaciones por deporte
+    # Base de datos inicial de ejemplo con especificaciones detalladas por deporte
     st.session_state.juegos_registrados = pd.DataFrame([
         {
             "ID Juego": "GAME-001",
