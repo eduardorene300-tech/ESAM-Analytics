@@ -77,7 +77,7 @@ def get_db_connection():
 
 
 # =========================================================
-# 4. INICIALIZACIÓN DE TABLAS GLOBALES
+# 4. INICIALIZACIÓN Y MIGRACIÓN DE TABLAS GLOBALES
 # =========================================================
 @st.cache_resource
 def init_db():
@@ -96,6 +96,10 @@ def init_db():
                     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+
+            # Asegurar que columnas clave existan si la tabla ya fue creada previamente
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
 
             # Tabla de Partidos (Básquetbol)
             cur.execute("""
@@ -277,6 +281,22 @@ def autenticar_usuario(username, password):
     return None
 
 
+def cambiar_password_usuario(user_id, nueva_password):
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            pwd_hash = hash_password(nueva_password)
+            cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (pwd_hash, user_id))
+            conn.commit()
+            cur.close()
+            conn.close()
+            return True, "✅ Contraseña actualizada correctamente."
+        except Exception as e:
+            return False, f"❌ Error al actualizar contraseña: {e}"
+    return False, "❌ Error de conexión a BD."
+
+
 def obtener_todos_los_usuarios():
     conn = get_db_connection()
     if not conn: return pd.DataFrame()
@@ -368,7 +388,7 @@ if not st.session_state.authenticated:
                     else: st.error(msg)
 else:
     # =========================================================
-    # PANEL PRINCIPAL Y NAVEGACIÓN ENTRE DEPORTES
+    # PANEL PRINCIPAL Y NAVEGACIÓN PROFESIONAL
     # =========================================================
     user_id = st.session_state.user_info["id"]
     user_name = st.session_state.user_info["nombre"]
@@ -380,11 +400,16 @@ else:
     st.sidebar.title("🏆 ESAM Analytics")
     st.sidebar.write(f"👤 **Analista:** {user_name}")
     
-    # ── SELECTOR PRINCIPAL DE DEPORTE ──
+    # ── SELECTOR PRINCIPAL DE NAVEGACIÓN ──
     st.sidebar.markdown("---")
-    deporte_sel = st.sidebar.selectbox(
-        "🎯 Seleccionar Deporte:",
-        ["🏀 Básquetbol", "⚾ Béisbol"]
+    opcion_menu = st.sidebar.radio(
+        "🧭 Menú Principal:",
+        [
+            "📊 Panel General y Ganancias",
+            "🏀 Módulo Básquetbol",
+            "⚾ Módulo Béisbol",
+            "🔐 Seguridad y Contraseñas"
+        ]
     )
 
     st.sidebar.markdown("---")
@@ -397,9 +422,51 @@ else:
         st.rerun()
 
     # =========================================================
+    # MÓDULO NUEVO: PANEL GENERAL Y GANANCIAS TOTALES
+    # =========================================================
+    if opcion_menu == "📊 Panel General y Ganancias":
+        st.title("📊 Panel General y Ganancias Totales")
+        st.caption(f"Consolidado financiero global de todas tus operaciones — {user_name}")
+
+        conn_gen = get_db_connection()
+        total_g_basket = 0.0
+        total_g_beisbol = 0.0
+        total_juegos_b = 0
+        total_pich_b = 0
+
+        if conn_gen:
+            try:
+                df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s;", conn_gen, params=(user_id,))
+                if not df_b_all.empty:
+                    total_g_basket = float(df_b_all["tarifa"].sum())
+                    total_juegos_b = len(df_b_all)
+
+                df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s;", conn_gen, params=(user_id,))
+                if not df_beis_all.empty:
+                    total_pich_b = int(df_beis_all["cantidad"].sum())
+                    precio_b_u = obtener_tasas_globales()["precio_beisbol"]
+                    total_g_beisbol = total_pich_b * precio_b_u
+
+                conn_gen.close()
+            except Exception as e:
+                st.error(f"Error al calcular totales: {e}")
+
+        total_ganancias_general = total_g_basket + total_g_beisbol
+
+        col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
+        col_mg1.metric("💰 Ganancias Totales ($)", f"${total_ganancias_general:,.2f}")
+        col_mg2.metric("🏀 Ingresos Básquetbol", f"${total_g_basket:,.2f}", f"{total_juegos_b} partidos")
+        col_mg3.metric("⚾ Ingresos Béisbol", f"${total_g_beisbol:,.2f}", f"{total_pich_b:,} picheos")
+        col_mg4.metric("📊 Total Actividad", f"{total_juegos_b + total_pich_b} registros")
+
+        st.markdown("---")
+        st.subheader("💡 Resumen Operativo")
+        st.info("Este panel consolida de forma automática el rendimiento económico de tus análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
+
+    # =========================================================
     # MÓDULO 1: BÁSQUETBOL
     # =========================================================
-    if "Básquetbol" in deporte_sel:
+    elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
         st.caption(f"Operador: {user_name} | Control Financiero y Tiempos de Partidos")
 
@@ -438,7 +505,6 @@ else:
             if not df_usr_all.empty:
                 st.dataframe(df_usr_all, use_container_width=True, hide_index=True)
         else:
-            # Filtro por Rango de Fechas o Período en Básquetbol
             st.sidebar.markdown("---")
             st.sidebar.subheader("🔍 Filtros de Búsqueda")
             filtro_b_tipo = st.sidebar.selectbox("Filtrar por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Hoy", "Este Mes", "Todos"], key="b_filtro_sel")
@@ -458,7 +524,6 @@ else:
                 f_ini = date(2020, 1, 1)
                 f_fin = date(2035, 12, 31)
 
-            # Formulario Registrar Partido
             with st.expander("➕ Registrar Nuevo Partido de Básquetbol", expanded=False):
                 col_m1, _ = st.columns([2, 2])
                 with col_m1:
@@ -506,7 +571,6 @@ else:
                             st.success("✅ Partido guardado exitosamente.")
                             st.rerun()
 
-            # Cargar y Mostrar Partidos filtrados por rango de fechas
             conn_q = get_db_connection()
             if conn_q:
                 df_basket = pd.read_sql_query("""
@@ -529,7 +593,6 @@ else:
 
                 st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-                # Exportar Reporte CSV
                 csv_b = df_basket.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     "📥 Exportar Reporte de Básquetbol (CSV)",
@@ -543,7 +606,7 @@ else:
     # =========================================================
     # MÓDULO 2: BÉISBOL
     # =========================================================
-    else:
+    elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
         st.caption(f"Operador: {user_name} | Control de Picheos y Registros")
 
@@ -562,7 +625,6 @@ else:
                     st.success("✅ Precio actualizado con éxito.")
                     st.rerun()
         else:
-            # Filtro por rango de fechas avanzado para Béisbol
             st.sidebar.markdown("---")
             st.sidebar.subheader("🔍 Filtros de Búsqueda")
             f_tipo_beis = st.sidebar.selectbox("Filtrar Béisbol por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Este Mes", "Todos"], key="b_beis_filtro")
@@ -580,7 +642,6 @@ else:
                 b_fini = date(2020, 1, 1)
                 b_ffin = date(2035, 12, 31)
 
-            # Formulario Nuevo Picheo
             with st.expander("➕ Registrar Lote de Picheos", expanded=False):
                 p1, p2, p3 = st.columns(3)
                 with p1: f_pich = st.date_input("Fecha", value=date.today(), key="p_fich")
@@ -604,7 +665,6 @@ else:
                             st.success("✅ Picheos guardados correctamente.")
                             st.rerun()
 
-            # Cargar picheos filtrados por fecha
             conn_pb = get_db_connection()
             if conn_pb:
                 df_picheos = pd.read_sql_query("""
@@ -630,7 +690,6 @@ else:
 
                 st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-                # Exportar CSV
                 csv_b = df_picheos.to_csv(index=False).encode("utf-8")
                 st.download_button(
                     "📥 Exportar Reporte de Picheos (CSV)",
@@ -641,3 +700,30 @@ else:
             else:
                 st.info("No hay registros de picheos en el rango de fechas seleccionado.")
 
+    # =========================================================
+    # MÓDULO NUEVO: SEGURIDAD Y CREDENCIALES
+    # =========================================================
+    elif opcion_menu == "🔐 Seguridad y Contraseñas":
+        st.title("🔐 Gestión de Seguridad y Contraseñas")
+        st.caption(f"Actualiza la contraseña de tu cuenta de operador — {user_name}")
+
+        with st.form("form_cambiar_pass"):
+            pass_vieja = st.text_input("Contraseña Actual", type="password")
+            pass_nueva = st.text_input("Nueva Contraseña", type="password")
+            pass_conf = st.text_input("Confirmar Nueva Contraseña", type="password")
+
+            submit_pass = st.form_submit_button("🔒 Actualizar Contraseña", use_container_width=True)
+
+            if submit_pass:
+                if not (pass_vieja and pass_nueva and pass_conf):
+                    st.warning("Por favor complete todos los campos.")
+                elif pass_nueva != pass_conf:
+                    st.error("Las nuevas contraseñas no coinciden.")
+                elif len(pass_nueva) < 6:
+                    st.error("La nueva contraseña debe tener al menos 6 caracteres.")
+                else:
+                    user_verif = autenticar_usuario(st.session_state.user_info["username"], pass_vieja)
+                    if not user_verif:
+                        st.error("❌ La contraseña actual es incorrecta.")
+                    else:
+                        exito_c, msg_c = cambiar_password_
