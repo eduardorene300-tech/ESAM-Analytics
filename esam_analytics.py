@@ -96,9 +96,11 @@ def init_db():
                 );
             """)
 
+            # Migraciones automáticas seguras para tablas preexistentes
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             
             try:
                 cur.execute("ALTER TABLE usuarios ALTER COLUMN password DROP NOT NULL;")
@@ -333,13 +335,13 @@ def obtener_todos_los_usuarios():
     if not conn: return pd.DataFrame()
     try:
         query = """
-            SELECT u.id, u.username, u.nombre, u.rol, u.creado_en,
+            SELECT u.id, u.username, u.nombre, u.rol,
                    COUNT(DISTINCT p.id) as total_partidos_basket,
                    COUNT(DISTINCT pi.id) as total_picheos_beisbol
             FROM usuarios u
             LEFT JOIN partidos p ON u.id = p.usuario_id
             LEFT JOIN picheos pi ON u.id = pi.usuario_id
-            GROUP BY u.id, u.username, u.nombre, u.rol, u.creado_en
+            GROUP BY u.id, u.username, u.nombre, u.rol
             ORDER BY u.id ASC;
         """
         df = pd.read_sql_query(query, conn)
@@ -770,7 +772,7 @@ else:
             st.info("No hay registros de picheos en el rango de fechas seleccionado.")
 
     # =========================================================
-    # MÓDULO NUEVO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (SOLO ADMIN)
+    # MÓDULO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (SOLO ADMIN)
     # =========================================================
     elif opcion_menu == "⚙️ Administración de Precios por Deporte":
         st.title("⚙️ PANEL DE CONTROL Y CONFIGURACIÓN DE TARIFAS")
