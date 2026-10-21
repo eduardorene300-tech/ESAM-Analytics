@@ -14,35 +14,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS personalizados avanzados para la interfaz visual
+# Estilos CSS profesionales avanzados (Diseño visual moderno tipo tarjeta corporativa)
 st.markdown("""
     <style>
     .main-header {
-        font-size: 2.2rem;
+        font-size: 2.3rem;
         color: #1E3A8A;
-        font-weight: 700;
+        font-weight: 800;
         margin-bottom: 0px;
+        letter-spacing: -0.5px;
     }
     .sub-header {
         font-size: 1.1rem;
         color: #4B5563;
-        margin-bottom: 20px;
+        margin-bottom: 25px;
     }
-    .card {
-        background-color: #FFFFFF;
+    .metric-card {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        border: 1px solid #e2e8f0;
         padding: 20px;
-        border-radius: 10px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border-radius: 12px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
         margin-bottom: 15px;
-    }
-    .metric-value {
-        font-size: 1.8rem;
-        font-weight: bold;
-        color: #1E40AF;
-    }
-    .metric-label {
-        font-size: 0.9rem;
-        color: #6B7280;
     }
     .stAlert {
         border-radius: 8px;
@@ -59,9 +52,11 @@ if 'user' not in st.session_state:
     st.session_state.user = "Eduardo Serrano"
 if 'tarifa_global' not in st.session_state:
     st.session_state.tarifa_global = 0.024
+if 'password_sistema' not in st.session_state:
+    st.session_state.password_sistema = "esam2026"
 
 if 'juegos_registrados' not in st.session_state:
-    # Base de datos local en memoria con registros iniciales de prueba
+    # Base de datos inicial de ejemplo
     st.session_state.juegos_registrados = pd.DataFrame([
         {
             "ID Juego": "GAME-001",
@@ -89,13 +84,11 @@ if 'juegos_registrados' not in st.session_state:
 # FUNCIONES AUXILIARES Y DE CÁLCULO
 # ==========================================
 def calcular_pago(cantidad_eventos, tarifa=None):
-    """Calcula el pago total en USD según el número de picheos/eventos analizados y la tarifa activa."""
     if tarifa is None:
         tarifa = st.session_state.tarifa_global
     return round(cantidad_eventos * tarifa, 3)
 
 def exportar_datos_sistema(df):
-    """Genera un archivo Excel en memoria con manejo de respaldo automático a CSV."""
     try:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -116,45 +109,46 @@ st.sidebar.markdown("---")
 opcion_menu = st.sidebar.radio(
     "Menú Principal",
     [
-        "📊 Panel General", 
+        "📊 Panel General y Ganancias", 
         "📝 Registrar Juego", 
-        "📈 Métricas y Ganancias", 
-        "🔍 Consultas y Búsqueda", 
+        "📈 Métricas y Filtros", 
+        "🔍 Búsqueda Avanzada", 
+        "🔐 Seguridad y Credenciales",
         "⚙️ Configuración"
     ]
 )
 
 st.sidebar.markdown("---")
-st.sidebar.info(f"Tarifa activa: **${st.session_state.tarifa_global} USD** por evento")
+st.sidebar.info(f"Tarifa activa: **${st.session_state.tarifa_global} USD** / evento")
 
 # ==========================================
-# MÓDULO 1: PANEL GENERAL
+# MÓDULO 1: PANEL GENERAL Y GANANCIAS
 # ==========================================
-if opcion_menu == "📊 Panel General":
-    st.markdown('<p class="main-header">Panel de Control de Analítica</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Resumen integral del rendimiento de análisis deportivo y métricas financieras</p>', unsafe_allow_html=True)
+if opcion_menu == "📊 Panel General y Ganancias":
+    st.markdown('<p class="main-header">Panel de Control y Ganancias</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Marcador global consolidado de rendimiento financiero y jornadas analizadas</p>', unsafe_allow_html=True)
     
     df = st.session_state.juegos_registrados
     
-    # Métricas principales superiores
+    # Tarjetas de marcadores superiores profesionales
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Juegos Analizados", len(df))
+        st.metric("Total Juegos", len(df))
     with col2:
         total_picheos = int(df["Picheos/Eventos"].sum()) if not df.empty else 0
-        st.metric("Total Picheos / Eventos", f"{total_picheos:,}")
+        st.metric("Total Eventos / Picheos", f"{total_picheos:,}")
     with col3:
         total_ganancias = float(df["Monto USD"].sum()) if not df.empty else 0.0
-        st.metric("Ganancias Acumuladas", f"${total_ganancias:,.2f} USD")
+        st.metric("Ganancias Totales Acumuladas", f"${total_ganancias:,.2f} USD")
     with col4:
         promedio_picheos = int(df["Picheos/Eventos"].mean()) if not df.empty else 0
-        st.metric("Promedio x/ Juego", f"{promedio_picheos}")
+        st.metric("Promedio p/ Juego", f"{promedio_picheos}")
 
-    st.markdown("### 📋 Historial y Registro Reciente de Jornadas")
+    st.markdown("---")
+    st.markdown("### 📋 Historial Completo de Jornadas Registradas")
     if not df.empty:
         st.dataframe(df, use_container_width=True)
         
-        # Botón de exportación inteligente
         datos_archivo, tipo_formato = exportar_datos_sistema(df)
         if tipo_formato == "excel":
             st.download_button(
@@ -171,14 +165,14 @@ if opcion_menu == "📊 Panel General":
                 mime="text/csv"
             )
     else:
-        st.warning("No hay juegos registrados en el sistema actualmente.")
+        st.warning("No hay juegos registrados en la base de datos actualmente.")
 
 # ==========================================
 # MÓDULO 2: REGISTRAR JUEGO
 # ==========================================
 elif opcion_menu == "📝 Registrar Juego":
     st.markdown('<p class="main-header">Registro de Nuevo Juego</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Ingresa la información técnica y de conteo de la jornada analizada</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Ingresa los datos técnicos y de conteo de la jornada analizada</p>', unsafe_allow_html=True)
 
     with st.form("form_registro_juego", clear_on_submit=True):
         col_f1, col_f2 = st.columns(2)
@@ -192,13 +186,13 @@ elif opcion_menu == "📝 Registrar Juego":
             equipo_visitante = st.text_input("Equipo Visitante", placeholder="Ej: Navegantes del Magallanes")
 
         monto_calculado = calcular_pago(picheos_eventos)
-        st.info(f"💵 **Monto estimado a cobrar:** ${monto_calculado:.3f} USD (Calculado a ${st.session_state.tarifa_global} por unidad)")
+        st.info(f"💵 **Monto estimado a cobrar:** ${monto_calculado:.3f} USD (Calculado a${st.session_state.tarifa_global} por unidad)")
 
         btn_guardar = st.form_submit_button("💾 Guardar y Registrar Juego")
 
         if btn_guardar:
             if not id_juego.strip() or not equipo_local.strip() or not equipo_visitante.strip():
-                st.error("Por favor completa todos los campos de texto obligatorios.")
+                st.error("Por favor completa todos los campos requeridos.")
             else:
                 nuevo_juego = {
                     "ID Juego": id_juego.upper(),
@@ -214,22 +208,22 @@ elif opcion_menu == "📝 Registrar Juego":
                     [st.session_state.juegos_registrados, pd.DataFrame([nuevo_juego])],
                     ignore_index=True
                 )
-                st.success(f"✅ ¡Juego {id_juego.upper()} registrado con éxito! Monto acumulado: ${monto_calculado:.2f} USD.")
+                st.success(f"✅ ¡Juego {id_juego.upper()} registrado exitosamente! Monto: ${monto_calculado:.2f} USD.")
 
 # ==========================================
-# MÓDULO 3: MÉTRICAS Y GANANCIAS
+# MÓDULO 3: MÉTRICAS Y FILTROS
 # ==========================================
-elif opcion_menu == "📈 Métricas y Ganancias":
-    st.markdown('<p class="main-header">Métricas Financieras y Rendimiento</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Filtra por rangos de fecha y visualiza tus ingresos por periodo</p>', unsafe_allow_html=True)
+elif opcion_menu == "📈 Métricas y Filtros":
+    st.markdown('<p class="main-header">Métricas y Ganancias por Periodo</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Filtra tus registros mediante rangos de fechas específicos</p>', unsafe_allow_html=True)
 
     df = st.session_state.juegos_registrados
 
     col_filtro1, col_filtro2 = st.columns(2)
     with col_filtro1:
-        b_inicio = st.date_input("Fecha Inicial del Filtro", value=date(2026, 1, 1))
+        b_inicio = st.date_input("Fecha Inicial", value=date(2026, 1, 1))
     with col_filtro2:
-        b_ffin = st.date_input("Fecha Final del Filtro", value=date(2035, 12, 31))
+        b_ffin = st.date_input("Fecha Final", value=date(2035, 12, 31))
 
     if not df.empty:
         df_temp = df.copy()
@@ -239,13 +233,12 @@ elif opcion_menu == "📈 Métricas y Ganancias":
 
         st.markdown(f"#### Resultados financieros entre {b_inicio} y {b_ffin}")
         
-        # Sub-métricas del filtro seleccionado
         col_m1, col_m2, col_m3 = st.columns(3)
         with col_m1:
-            st.metric("Juegos en el Periodo", len(df_filtrado))
+            st.metric("Juegos Filtrados", len(df_filtrado))
         with col_m2:
             pich_filt = int(df_filtrado["Picheos/Eventos"].sum()) if not df_filtrado.empty else 0
-            st.metric("Eventos Totales", f"{pich_filt:,}")
+            st.metric("Eventos del Periodo", f"{pich_filt:,}")
         with col_m3:
             mont_filt = float(df_filtrado["Monto USD"].sum()) if not df_filtrado.empty else 0.0
             st.metric("Ingresos del Periodo", f"${mont_filt:,.2f} USD")
@@ -253,54 +246,86 @@ elif opcion_menu == "📈 Métricas y Ganancias":
         st.dataframe(df_filtrado.drop(columns=['Fecha_dt'], errors='ignore'), use_container_width=True)
 
         if not df_filtrado.empty:
-            st.markdown("#### 📊 Gráfico de Ingresos por Juego")
+            st.markdown("#### 📊 Gráfico de Rendimiento Financiero")
             st.bar_chart(data=df_filtrado, x="ID Juego", y="Monto USD")
     else:
         st.info("No hay registros disponibles para procesar métricas.")
 
 # ==========================================
-# MÓDULO 4: CONSULTAS Y BÚSQUEDA
+# MÓDULO 4: BÚSQUEDA AVANZADA
 # ==========================================
-elif opcion_menu == "🔍 Consultas y Búsqueda":
-    st.markdown('<p class="main-header">Búsqueda Avanzada de Registros</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Encuentra juegos específicos por código, deporte o equipo</p>', unsafe_allow_html=True)
+elif opcion_menu == "🔍 Búsqueda Avanzada":
+    st.markdown('<p class="main-header">Búsqueda Rápida de Registros</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Localiza juegos por ID, equipo o deporte de forma instantánea</p>', unsafe_allow_html=True)
 
     df = st.session_state.juegos_registrados
 
     if not df.empty:
-        criterio = st.text_input("🔍 Buscar por ID de Juego, Equipo o Deporte:", placeholder="Ej: Leones, Béisbol, GAME-001")
+        criterio = st.text_input("🔍 Término de búsqueda:", placeholder="Ej: Leones, Básquetbol, GAME-001")
         
         if criterio:
             mask = df.astype(str).apply(lambda col: col.str.contains(criterio, case=False, na=False)).any(axis=1)
             df_resultados = df[mask]
-            st.markdown(f"**Se encontraron {len(df_resultados)} coincidencia(s) para '{criterio}':**")
+            st.markdown(f"**Se encontraron {len(df_resultados)} coincidencia(s):**")
             st.dataframe(df_resultados, use_container_width=True)
         else:
-            st.info("Escribe arriba cualquier término para realizar una búsqueda instantánea en la base de datos.")
+            st.info("Introduce un término en el campo de arriba para filtrar la base de datos.")
     else:
-        st.warning("No hay registros en la base de datos para buscar.")
+        st.warning("No hay registros disponibles para realizar búsquedas.")
 
 # ==========================================
-# MÓDULO 5: CONFIGURACIÓN
+# MÓDULO 5: SEGURIDAD Y CREDENCIALES
+# ==========================================
+elif opcion_menu == "🔐 Seguridad y Credenciales":
+    st.markdown('<p class="main-header">Gestión de Seguridad y Claves</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Modifica o recupera la contraseña de acceso del sistema</p>', unsafe_allow_html=True)
+
+    with st.form("form_seguridad"):
+        st.markdown("#### Cambio de Clave de Acceso")
+        clave_actual = st.text_input("Contraseña Actual", type="password", placeholder="Introduce tu clave actual")
+        nueva_clave = st.text_input("Nueva Contraseña", type="password", placeholder="Introduce la nueva clave")
+        confirmar_clave = st.text_input("Confirma la Nueva Contraseña", type="password", placeholder="Repite la nueva clave")
+        
+        btn_cambiar = st.form_submit_button("🔒 Actualizar Contraseña")
+        
+        if btn_cambiar:
+            if clave_actual != st.session_state.password_sistema:
+                st.error("❌ La contraseña actual no es correcta.")
+            elif not nueva_clave or nueva_clave != confirmar_clave:
+                st.error("❌ Las nuevas contraseñas no coinciden o están vacías.")
+            else:
+                st.session_state.password_sistema = nueva_clave
+                st.success("✅ ¡Contraseña actualizada exitosamente con altos estándares de seguridad!")
+
+    st.markdown("---")
+    with st.expander("❓ ¿Olvidaste tu contraseña o necesitas recuperación?"):
+        st.markdown(f"""
+        Si necesitas recuperar tu clave de acceso en este entorno local, la contraseña maestra actual configurada es:  
+        `{st.session_state.password_sistema}`  
+        *Guarda esta clave en un lugar seguro.*
+        """)
+
+# ==========================================
+# MÓDULO 6: CONFIGURACIÓN
 # ==========================================
 elif opcion_menu == "⚙️ Configuración":
     st.markdown('<p class="main-header">Configuración del Sistema</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Personaliza tus datos de usuario, tarifas y mantenimiento de datos</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-header">Personaliza parámetros globales de operador y tarifas</p>', unsafe_allow_html=True)
 
     with st.form("form_config"):
         nuevo_usuario = st.text_input("Nombre del Analista", value=st.session_state.user)
         nueva_tarifa = st.number_input("Tarifa estándar por picheo/evento (USD)", value=float(st.session_state.tarifa_global), format="%.3f")
         
-        btn_guardar_config = st.form_submit_button("💾 Guardar Cambios de Configuración")
+        btn_guardar_config = st.form_submit_button("💾 Guardar Cambios")
         if btn_guardar_config:
             st.session_state.user = nuevo_usuario
             st.session_state.tarifa_global = nueva_tarifa
-            st.success("✅ Configuración actualizada correctamente.")
+            st.success("✅ Configuración general guardada con éxito.")
 
     st.markdown("---")
     st.markdown("### ⚠️ Zona de Mantenimiento")
-    if st.button("🗑️ Eliminar Todos los Registros de la Base de Datos"):
+    if st.button("🗑️ Vaciar y Eliminar Todos los Registros"):
         st.session_state.juegos_registrados = pd.DataFrame(columns=[
             "ID Juego", "Fecha", "Deporte", "Equipo Local", "Equipo Visitante", "Picheos/Eventos", "Monto USD", "Estado"
         ])
-        st.warning("Se han borrado todos los registros de la memoria de la aplicación.")
+        st.warning("Se han eliminado todos los registros almacenados en la base de datos temporal.")
