@@ -20,8 +20,7 @@ def inicializar_tablas():
         conn = obtener_conexion()
         cursor = conn.cursor()
         
-        # Bloque inteligente: Verifica si la tabla usuarios existe pero le falta la columna password.
-        # Si tiene estructura vieja, la recrea limpia de forma automática.
+        # Tabla de usuarios
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id SERIAL PRIMARY KEY,
@@ -30,6 +29,8 @@ def inicializar_tablas():
                 rol VARCHAR(20) NOT NULL
             );
         """)
+        
+        # Asegurar columna password si la tabla ya existía sin ella
         cursor.execute("""
             DO $$ 
             BEGIN 
@@ -116,7 +117,7 @@ if not st.session_state.autenticado:
                 except Exception as e:
                     st.error(f"Error al verificar credenciales: {e}")
 else:
-    # --- 4. APLICACIÓN PRINCIPAL ---
+    # --- 4. APLICACIÓN PRINCIPAL (UNA VEZ LOGUEADO) ---
     st.sidebar.title("⚡ ESAM Analytics")
     st.sidebar.write(f"Usuario: **{st.session_state.usuario}**")
     st.sidebar.write(f"Rol: **{st.session_state.rol}**")
@@ -219,7 +220,7 @@ else:
                         st.error("La cantidad de picheos debe ser mayor a 0.")
                         
         with tab_basket:
-            st.subheader("Registro de Básquetbol (Synergy Sports)")
+            st.subheader("Registro de Básquetbol")
             with st.form("form_basket"):
                 fecha_k = st.date_input("Fecha del juego", value=date.today(), key="fk")
                 detalles_k = st.text_input("Detalles / Equipos / ID del juego", key="dk")
