@@ -14,7 +14,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Estilos CSS personalizados para mejorar la interfaz
+# Estilos CSS personalizados para mejorar la interfaz visual
 st.markdown("""
     <style>
     .main-header {
@@ -55,7 +55,7 @@ if 'logged_in' not in st.session_state:
 if 'user' not in st.session_state:
     st.session_state.user = "Analista Deportivo"
 if 'juegos_registrados' not in st.session_state:
-    # Datos de prueba iniciales
+    # Datos de prueba iniciales para validar la interfaz
     st.session_state.juegos_registrados = pd.DataFrame([
         {
             "ID Juego": "GAME-001",
@@ -64,7 +64,7 @@ if 'juegos_registrados' not in st.session_state:
             "Equipo Local": "Leones",
             "Equipo Visitante": "Navegantes",
             "Picheos/Eventos": 285,
-            "Monto USD": 285 * 0.024,
+            "Monto USD": round(285 * 0.024, 3),
             "Estado": "Completado"
         },
         {
@@ -74,7 +74,7 @@ if 'juegos_registrados' not in st.session_state:
             "Equipo Local": "Lakers",
             "Equipo Visitante": "Celtics",
             "Picheos/Eventos": 310,
-            "Monto USD": 310 * 0.024,
+            "Monto USD": round(310 * 0.024, 3),
             "Estado": "Completado"
         }
     ])
@@ -87,11 +87,16 @@ def calcular_pago(cantidad_eventos, tarifa=0.024):
     return round(cantidad_eventos * tarifa, 3)
 
 def exportar_a_excel(df):
-    """Genera un archivo Excel en memoria para descarga."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Analitica')
-    return output.getvalue()
+    """Genera un archivo Excel en memoria con manejo de excepciones si falta openpyxl."""
+    try:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Analitica')
+        return output.getvalue(), "excel"
+    except ImportError:
+        # Respaldo a CSV si no está instalado openpyxl
+        output_csv = df.to_csv(index=False).encode('utf-8')
+        return output_csv, "csv"
 
 # ==========================================
 # BARRA LATERAL (NAVEGACIÓN)
@@ -135,13 +140,21 @@ if opcion_menu == "📊 Panel General":
     if not df.empty:
         st.dataframe(df, use_container_width=True)
         
-        excel_data = exportar_a_excel(df)
-        st.download_button(
-            label="📥 Exportar Reporte a Excel",
-            data=excel_data,
-            file_name=f"ESAM_Analytics_Reporte_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        datos_archivo, tipo_formato = exportar_a_excel(df)
+        if tipo_formato == "excel":
+            st.download_button(
+                label="📥 Exportar Reporte a Excel (.xlsx)",
+                data=datos_archivo,
+                file_name=f"ESAM_Analytics_Reporte_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.download_button(
+                label="📥 Exportar Reporte a CSV (.csv)",
+                data=datos_archivo,
+                file_name=f"ESAM_Analytics_Reporte_{date.today()}.csv",
+                mime="text/csv"
+            )
     else:
         st.warning("No hay juegos registrados en el sistema.")
 
@@ -201,14 +214,13 @@ elif opcion_menu == "📈 Métricas y Ganancias":
     with col_filtro1:
         b_inicio = st.date_input("Fecha Inicial", value=date(2026, 1, 1))
     with col_filtro2:
-        # Línea 712 ajustada y corregida con sintaxis válida
         b_ffin = st.date_input("Fecha Final", value=date(2035, 12, 31))
 
     if not df.empty:
-        # Convertir campo fecha a datetime para filtrado correcto
-        df['Fecha_dt'] = pd.to_datetime(df['Fecha'])
-        mask = (df['Fecha_dt'] >= pd.to_datetime(b_inicio)) & (df['Fecha_dt'] <= pd.to_datetime(b_ffin))
-        df_filtrado = df.loc[mask]
+        df_temp = df.copy()
+        df_temp['Fecha_dt'] = pd.to_datetime(df_temp['Fecha'])
+        mask = (df_temp['Fecha_dt'] >= pd.to_datetime(b_inicio)) & (df_temp['Fecha_dt'] <= pd.to_datetime(b_ffin))
+        df_filtrado = df_temp.loc[mask]
 
         st.markdown(f"#### Resultados entre {b_inicio} y {b_ffin}")
         st.dataframe(df_filtrado.drop(columns=['Fecha_dt'], errors='ignore'), use_container_width=True)
