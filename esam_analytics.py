@@ -640,3 +640,4 @@ else:
                 )
             else:
                 st.info("No hay registros de picheos en el rango de fechas seleccionado.")
+
