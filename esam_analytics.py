@@ -9,7 +9,7 @@ import streamlit as st
 # 1. CONFIGURACIÓN GENERAL DE LA PÁGINA
 # =========================================================
 st.set_page_config(
-    page_title="ESAM Analytics",
+    page_title="ESAM Analytics 360°",
     page_icon="🏆",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -85,7 +85,6 @@ def init_db():
     if conn:
         try:
             cur = conn.cursor()
-            # Tabla de Usuarios unificada
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS usuarios (
                     id SERIAL PRIMARY KEY,
@@ -97,7 +96,6 @@ def init_db():
                 );
             """)
 
-            # Migraciones automáticas seguras para ajustar estructuras antiguas
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
@@ -108,7 +106,6 @@ def init_db():
                 conn.rollback()
                 cur = conn.cursor()
 
-            # Tabla de Partidos (Básquetbol)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS partidos (
                     id SERIAL PRIMARY KEY,
@@ -122,7 +119,6 @@ def init_db():
                 );
             """)
 
-            # Tabla de Picheos (Béisbol)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS picheos (
                     id SERIAL PRIMARY KEY,
@@ -134,7 +130,6 @@ def init_db():
                 );
             """)
 
-            # Tabla de Configuración Global de Tarifas / Precios
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS configuracion_global (
                     clave VARCHAR(50) PRIMARY KEY,
@@ -142,7 +137,6 @@ def init_db():
                 );
             """)
 
-            # Valores por defecto de configuración
             defaults = [
                 ("tasa_tramo_1", 6.00),
                 ("tasa_tramo_2", 6.50),
@@ -159,7 +153,6 @@ def init_db():
                     ON CONFLICT (clave) DO NOTHING;
                 """, (clave, val))
 
-            # FORZAR RESETEO DE CONTRASEÑA DE ADMIN A 'admin123'
             admin_hash = hash_password("admin123")
             try:
                 cur.execute("""
@@ -194,8 +187,9 @@ init_db()
 
 
 # =========================================================
-# 5. FUNCIONES DE CONFIGURACIÓN Y TARIFAS
+# 5. CONSULTAS OPTIMIZADAS CON CACHÉ (RENDIMIENTO ALTO)
 # =========================================================
+@st.cache_data(ttl=10)
 def obtener_tasas_globales():
     conn = get_db_connection()
     tasas = {
@@ -238,6 +232,7 @@ def actualizar_tasa_global(clave, nuevo_valor):
             conn.commit()
             cur.close()
             conn.close()
+            st.cache_data.clear()
             return True
         except Exception as e:
             st.error(f"Error al actualizar tasa: {e}")
@@ -259,7 +254,7 @@ def obtener_tarifa_basket(tipo_partido, cant_partidos=0):
 
 
 # =========================================================
-# 6. GESTIÓN DE USUARIOS Y AUTENTICACIÓN
+# 6. GESTIÓN DE USUARIOS Y AUDITORÍA
 # =========================================================
 def registrar_usuario(username, nombre, password, rol="operador"):
     conn = get_db_connection()
@@ -282,6 +277,7 @@ def registrar_usuario(username, nombre, password, rol="operador"):
             conn.commit()
             cur.close()
             conn.close()
+            st.cache_data.clear()
             return True, "✅ Usuario registrado exitosamente."
         except psycopg2.IntegrityError:
             return False, "⚠️ El nombre de usuario ya existe."
@@ -331,6 +327,7 @@ def cambiar_password_usuario(user_id, nueva_password):
     return False, "❌ Error de conexión a BD."
 
 
+@st.cache_data(ttl=10)
 def obtener_todos_los_usuarios():
     conn = get_db_connection()
     if not conn: return pd.DataFrame()
@@ -367,7 +364,7 @@ def obtener_rango_quincena(fecha_ref):
 
 
 # =========================================================
-# 7. MANEJO DE SESIÓN Y LOGIN
+# 7. MANEJO DE SESIÓN Y AUTENTICACIÓN
 # =========================================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -375,7 +372,7 @@ if "user_info" not in st.session_state:
     st.session_state.user_info = None
 
 if not st.session_state.authenticated:
-    st.title("🏆 ESAM Analytics")
+    st.title("🏆 ESAM Analytics 360°")
     st.caption("Plataforma Profesional de Análisis y Control Operativo (Básquetbol & Béisbol)")
 
     tab_login, tab_registro, tab_reset = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario", "⚙️ Restablecer Clave Admin"])
@@ -439,6 +436,7 @@ if not st.session_state.authenticated:
                     conn_r.commit()
                     cur_r.close()
                     conn_r.close()
+                    st.cache_data.clear()
                     st.success("✅ ¡Contraseña de 'admin' restablecida con éxito a 'admin123'! Ya puedes iniciar sesión.")
                 except Exception as e:
                     st.error(f"Error al restablecer: {e}")
@@ -457,17 +455,17 @@ else:
     st.sidebar.title("🏆 ESAM Analytics")
     st.sidebar.write(f"👤 **Analista:** {user_name}")
     
-    # ── SELECTOR PRINCIPAL DE NAVEGACIÓN ──
+    opciones_menu_list = [
+        "📊 Panel General y Ganancias",
+        "🏀 Módulo Básquetbol",
+        "⚾ Módulo Béisbol",
+        "🔐 Seguridad y Contraseñas"
+    ]
+    if es_admin_base:
+        opciones_menu_list.insert(3, "⚙️ Administración de Precios por Deporte")
+
     st.sidebar.markdown("---")
-    opcion_menu = st.sidebar.radio(
-        "🧭 Menú Principal:",
-        [
-            "📊 Panel General y Ganancias",
-            "🏀 Módulo Básquetbol",
-            "⚾ Módulo Béisbol",
-            "🔐 Seguridad y Contraseñas"
-        ]
-    )
+    opcion_menu = st.sidebar.radio("🧭 Menú Principal:", opciones_menu_list)
 
     st.sidebar.markdown("---")
     modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=es_admin_base)
@@ -479,11 +477,26 @@ else:
         st.rerun()
 
     # =========================================================
-    # MÓDULO NUEVO: PANEL GENERAL Y GANANCIAS TOTALES
+    # MÓDULO: PANEL GENERAL Y GANANCIAS TOTALES
     # =========================================================
     if opcion_menu == "📊 Panel General y Ganancias":
         st.title("📊 Panel General y Ganancias Totales")
-        st.caption(f"Consolidado financiero global de todas tus operaciones — {user_name}")
+        
+        target_user_id = user_id
+        if es_admin:
+            df_usrs = obtener_todos_los_usuarios()
+            if not df_usrs.empty:
+                opciones_u = {"🌐 TODOS LOS OPERADORES (CONSOLIDADO GLOBAL)": 0}
+                for _, r_u in df_usrs.iterrows():
+                    opciones_u[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
+                
+                u_seleccionado = st.selectbox("👑 [ADMIN] Seleccionar Operador para Inspección de Datos:", list(opciones_u.keys()))
+                target_user_id = opciones_u[u_seleccionado]
+
+        if target_user_id == 0:
+            st.caption("Consolidado financiero global de TODOS los operadores en el sistema")
+        else:
+            st.caption(f"Consolidado financiero de operaciones")
 
         conn_gen = get_db_connection()
         total_g_basket = 0.0
@@ -493,12 +506,17 @@ else:
 
         if conn_gen:
             try:
-                df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s;", conn_gen, params=(user_id,))
+                if target_user_id == 0:
+                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos;", conn_gen)
+                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos;", conn_gen)
+                else:
+                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s;", conn_gen, params=(target_user_id,))
+                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s;", conn_gen, params=(target_user_id,))
+
                 if not df_b_all.empty:
                     total_g_basket = float(df_b_all["tarifa"].sum())
                     total_juegos_b = len(df_b_all)
 
-                df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s;", conn_gen, params=(user_id,))
                 if not df_beis_all.empty:
                     total_pich_b = int(df_beis_all["cantidad"].sum())
                     precio_b_u = obtener_tasas_globales()["precio_beisbol"]
@@ -518,244 +536,286 @@ else:
 
         st.markdown("---")
         st.subheader("💡 Resumen Operativo")
-        st.info("Este panel consolida de forma automática el rendimiento económico de tus análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
+        st.info("Este panel consolida de forma automática el rendimiento económico de los análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
 
     # =========================================================
     # MÓDULO 1: BÁSQUETBOL
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
-        st.caption(f"Operador: {user_name} | Control Financiero y Tiempos de Partidos")
-
+        
+        target_b_user_id = user_id
         if es_admin:
-            sub_vista_admin = st.sidebar.radio("🧭 Navegación Básquetbol:", ["📊 Panel de Partidos", "👑 Administración Global Tasas"])
-        else:
-            sub_vista_admin = "📊 Panel de Partidos"
+            df_usrs = obtener_todos_los_usuarios()
+            if not df_usrs.empty:
+                opciones_b = {"🌐 TODOS LOS OPERADORES": 0}
+                for _, r_u in df_usrs.iterrows():
+                    opciones_b[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
+                
+                u_b_sel = st.sidebar.selectbox("👑 Ver Básquetbol de:", list(opciones_b.keys()))
+                target_b_user_id = opciones_b[u_b_sel]
 
-        if es_admin and sub_vista_admin == "👑 Administración Global Tasas":
-            st.subheader("⚙️ Configuración Global de Tarifas de Básquetbol")
+        st.caption("Control Financiero y Tiempos de Partidos")
+
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🔍 Filtros de Búsqueda")
+        filtro_b_tipo = st.sidebar.selectbox("Filtrar por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Hoy", "Este Mes", "Todos"], key="b_filtro_sel")
+
+        if filtro_b_tipo == "Rango de Fechas Personalizado":
+            col_fd1, col_fd2 = st.sidebar.columns(2)
+            with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=15), key="b_f_ini")
+            with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="b_f_fin")
+        elif filtro_b_tipo == "Hoy":
+            f_ini = f_fin = date.today()
+        elif filtro_b_tipo == "Esta Quincena":
+            f_ini, f_fin = obtener_rango_quincena(date.today())
+        elif filtro_b_tipo == "Este Mes":
+            f_ini = date(date.today().year, date.today().month, 1)
+            f_fin = date.today()
+        else:
+            f_ini = date(2020, 1, 1)
+            f_fin = date(2035, 12, 31)
+
+        with st.expander("➕ Registrar Nuevo Partido de Básquetbol", expanded=False):
+            col_m1, _ = st.columns([2, 2])
+            with col_m1:
+                modalidad_sel = st.radio("Modalidad:", ["🏀 Quincenal Estándar", "⚡ En Vivo Normal", "🔥 En Vivo NBA"])
+
+            cf1, cf2, cf3 = st.columns(3)
+            with cf1: fecha_p = st.date_input("Fecha", value=date.today(), key="b_fecha")
+            with cf2: codigo_p = st.text_input("Código de Partido", placeholder="Ej: 1042")
+            with cf3: tiempo_p = st.text_input("Tiempo Ejecución", placeholder="HH:MM:SS")
+
             tasas_v = obtener_tasas_globales()
-            with st.form("form_tasas_basket"):
-                c1, c2, c3, c4 = st.columns(4)
-                with c1: nt1 = st.number_input("Tramo 1 (1-11)", value=tasas_v["tramo_1"], step=0.25)
-                with c2: nt2 = st.number_input("Tramo 2 (12-14)", value=tasas_v["tramo_2"], step=0.25)
-                with c3: nt3 = st.number_input("Tramo 3 (15-29)", value=tasas_v["tramo_3"], step=0.25)
-                with c4: nt4 = st.number_input("Tramo 4 (30+)", value=tasas_v["tramo_4"], step=0.25)
-
-                cv1, cv2 = st.columns(2)
-                with cv1: nv_norm = st.number_input("En Vivo Normal ($)", value=tasas_v["en_vivo_normal"], step=0.50)
-                with cv2: nv_nba = st.number_input("En Vivo NBA ($)", value=tasas_v["en_vivo_nba"], step=0.50)
-
-                if st.form_submit_button("💾 Guardar Cambios"):
-                    actualizar_tasa_global("tasa_tramo_1", nt1)
-                    actualizar_tasa_global("tasa_tramo_2", nt2)
-                    actualizar_tasa_global("tasa_tramo_3", nt3)
-                    actualizar_tasa_global("tasa_tramo_4", nt4)
-                    actualizar_tasa_global("tasa_en_vivo_normal", nv_norm)
-                    actualizar_tasa_global("tasa_en_vivo_nba", nv_nba)
-                    st.success("✅ Tarifas actualizadas correctamente.")
-                    st.rerun()
-
-            st.markdown("---")
-            st.subheader("👥 Listado de Todos los Usuarios del Sistema")
-            df_usr_all = obtener_todos_los_usuarios()
-            if not df_usr_all.empty:
-                st.dataframe(df_usr_all, use_container_width=True, hide_index=True)
-        else:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("🔍 Filtros de Búsqueda")
-            filtro_b_tipo = st.sidebar.selectbox("Filtrar por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Hoy", "Este Mes", "Todos"], key="b_filtro_sel")
-
-            if filtro_b_tipo == "Rango de Fechas Personalizado":
-                col_fd1, col_fd2 = st.sidebar.columns(2)
-                with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=15), key="b_f_ini")
-                with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="b_f_fin")
-            elif filtro_b_tipo == "Hoy":
-                f_ini = f_fin = date.today()
-            elif filtro_b_tipo == "Esta Quincena":
-                f_ini, f_fin = obtener_rango_quincena(date.today())
-            elif filtro_b_tipo == "Este Mes":
-                f_ini = date(date.today().year, date.today().month, 1)
-                f_fin = date.today()
+            if "NBA" in modalidad_sel:
+                t_guardar = "en_vivo_nba"
+                tarifa_calc = tasas_v["en_vivo_nba"]
+            elif "Normal" in modalidad_sel:
+                t_guardar = "en_vivo_normal"
+                tarifa_calc = tasas_v["en_vivo_normal"]
             else:
-                f_ini = date(2020, 1, 1)
-                f_fin = date(2035, 12, 31)
+                t_guardar = "quincenal"
+                iq_i, iq_f = obtener_rango_quincena(fecha_p)
+                conn_c = get_db_connection()
+                cnt_q = 0
+                if conn_c:
+                    cur_c = conn_c.cursor()
+                    cur_c.execute("SELECT COUNT(*) FROM partidos WHERE usuario_id=%s AND fecha >= %s AND fecha <= %s AND (tipo_partido IS NULL OR tipo_partido='quincenal')", (user_id, iq_i, iq_f))
+                    cnt_q = cur_c.fetchone()[0]
+                    cur_c.close()
+                    conn_c.close()
+                tarifa_calc = obtener_tarifa_basket("quincenal", cnt_q + 1)
 
-            with st.expander("➕ Registrar Nuevo Partido de Básquetbol", expanded=False):
-                col_m1, _ = st.columns([2, 2])
-                with col_m1:
-                    modalidad_sel = st.radio("Modalidad:", ["🏀 Quincenal Estándar", "⚡ En Vivo Normal", "🔥 En Vivo NBA"])
-
-                cf1, cf2, cf3 = st.columns(3)
-                with cf1: fecha_p = st.date_input("Fecha", value=date.today(), key="b_fecha")
-                with cf2: codigo_p = st.text_input("Código de Partido", placeholder="Ej: 1042")
-                with cf3: tiempo_p = st.text_input("Tiempo Ejecución", placeholder="HH:MM:SS")
-
-                tasas_v = obtener_tasas_globales()
-                if "NBA" in modalidad_sel:
-                    t_guardar = "en_vivo_nba"
-                    tarifa_calc = tasas_v["en_vivo_nba"]
-                elif "Normal" in modalidad_sel:
-                    t_guardar = "en_vivo_normal"
-                    tarifa_calc = tasas_v["en_vivo_normal"]
+            if st.button("💾 Guardar Partido", use_container_width=True):
+                if not codigo_p.strip():
+                    st.warning("Ingrese el código del partido.")
                 else:
-                    t_guardar = "quincenal"
-                    iq_i, iq_f = obtener_rango_quincena(fecha_p)
-                    conn_c = get_db_connection()
-                    cnt_q = 0
-                    if conn_c:
-                        cur_c = conn_c.cursor()
-                        cur_c.execute("SELECT COUNT(*) FROM partidos WHERE usuario_id=%s AND fecha >= %s AND fecha <= %s AND (tipo_partido IS NULL OR tipo_partido='quincenal')", (user_id, iq_i, iq_f))
-                        cnt_q = cur_c.fetchone()[0]
-                        cur_c.close()
-                        conn_c.close()
-                    tarifa_calc = obtener_tarifa_basket("quincenal", cnt_q + 1)
+                    conn_s = get_db_connection()
+                    if conn_s:
+                        cur_s = conn_s.cursor()
+                        cur_s.execute("""
+                            INSERT INTO partidos (usuario_id, codigo_partido, fecha, tiempo_ejecucion, tarifa, tipo_partido)
+                            VALUES (%s, %s, %s, %s, %s, %s);
+                        """, (user_id, codigo_p.strip(), fecha_p, tiempo_p.strip(), tarifa_calc, t_guardar))
+                        conn_s.commit()
+                        cur_s.close()
+                        conn_s.close()
+                        st.cache_data.clear()
+                        st.success("✅ Partido guardado exitosamente.")
+                        st.rerun()
 
-                if st.button("💾 Guardar Partido", use_container_width=True):
-                    if not codigo_p.strip():
-                        st.warning("Ingrese el código del partido.")
-                    else:
-                        conn_s = get_db_connection()
-                        if conn_s:
-                            cur_s = conn_s.cursor()
-                            cur_s.execute("""
-                                INSERT INTO partidos (usuario_id, codigo_partido, fecha, tiempo_ejecucion, tarifa, tipo_partido)
-                                VALUES (%s, %s, %s, %s, %s, %s);
-                            """, (user_id, codigo_p.strip(), fecha_p, tiempo_p.strip(), tarifa_calc, t_guardar))
-                            conn_s.commit()
-                            cur_s.close()
-                            conn_s.close()
-                            st.success("✅ Partido guardado exitosamente.")
-                            st.rerun()
-
-            conn_q = get_db_connection()
-            if conn_q:
+        conn_q = get_db_connection()
+        if conn_q:
+            if target_b_user_id == 0:
+                df_basket = pd.read_sql_query("""
+                    SELECT p.id, u.nombre as operador, p.codigo_partido, p.fecha, p.tiempo_ejecucion, p.tarifa, p.tipo_partido 
+                    FROM partidos p
+                    JOIN usuarios u ON p.usuario_id = u.id
+                    WHERE p.fecha BETWEEN %s AND %s
+                    ORDER BY p.fecha DESC, p.id DESC;
+                """, conn_q, params=(f_ini, f_fin))
+            else:
                 df_basket = pd.read_sql_query("""
                     SELECT id, codigo_partido, fecha, tiempo_ejecucion, tarifa, tipo_partido 
                     FROM partidos 
                     WHERE usuario_id = %s AND fecha BETWEEN %s AND %s
                     ORDER BY fecha DESC, id DESC;
-                """, conn_q, params=(user_id, f_ini, f_fin))
-                conn_q.close()
-            else:
-                df_basket = pd.DataFrame()
+                """, conn_q, params=(target_b_user_id, f_ini, f_fin))
+            conn_q.close()
+        else:
+            df_basket = pd.DataFrame()
 
-            st.markdown(f"### 📋 Registros de Básquetbol ({f_ini} al {f_fin})")
-            if not df_basket.empty:
-                total_ganancias = df_basket["tarifa"].astype(float).sum()
-                col_k1, col_k2, col_k3 = st.columns(3)
-                col_k1.metric("🏀 Total Partidos", len(df_basket))
-                col_k2.metric("💵 Total Ganancias", f"${total_ganancias:.2f}")
-                col_k3.metric("📅 Rango", f"{f_ini} al {f_fin}")
+        st.markdown(f"### 📋 Registros de Básquetbol ({f_ini} al {f_fin})")
+        if not df_basket.empty:
+            total_ganancias = df_basket["tarifa"].astype(float).sum()
+            col_k1, col_k2, col_k3 = st.columns(3)
+            col_k1.metric("🏀 Total Partidos", len(df_basket))
+            col_k2.metric("💵 Total Ganancias", f"${total_ganancias:.2f}")
+            col_k3.metric("📅 Rango", f"{f_ini} al {f_fin}")
 
-                st.dataframe(df_basket, use_container_width=True, hide_index=True)
+            st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-                csv_b = df_basket.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "📥 Exportar Reporte de Básquetbol (CSV)",
-                    data=csv_b,
-                    file_name=f"esam_basket_{f_ini}_al_{f_fin}.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("No hay registros de básquetbol en el rango de fechas seleccionado.")
+            csv_b = df_basket.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Exportar Reporte de Básquetbol (CSV)",
+                data=csv_b,
+                file_name=f"esam_basket_{f_ini}_al_{f_fin}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("No hay registros de básquetbol en el rango de fechas seleccionado.")
 
     # =========================================================
     # MÓDULO 2: BÉISBOL
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
-        st.caption(f"Operador: {user_name} | Control de Picheos y Registros")
 
+        target_beis_user_id = user_id
         if es_admin:
-            sub_v_beis = st.sidebar.radio("🧭 Navegación Béisbol:", ["📊 Panel & Cargas", "⚙️ Configuración Precio"])
-        else:
-            sub_v_beis = "📊 Panel & Cargas"
+            df_usrs = obtener_todos_los_usuarios()
+            if not df_usrs.empty:
+                opciones_beis = {"🌐 TODOS LOS OPERADORES": 0}
+                for _, r_u in df_usrs.iterrows():
+                    opciones_beis[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
+                
+                u_beis_sel = st.sidebar.selectbox("👑 Ver Béisbol de:", list(opciones_beis.keys()))
+                target_beis_user_id = opciones_beis[u_beis_sel]
 
-        if es_admin and sub_v_beis == "⚙️ Configuración Precio":
-            st.subheader("⚙️ Configuración de Precio por Picheo")
-            tasas_b = obtener_tasas_globales()
-            with st.form("form_precio_beis"):
-                nuevo_precio_b = st.number_input("Precio por Picheo (USD)", value=tasas_b["precio_beisbol"], format="%.4f", step=0.001)
-                if st.form_submit_button("💾 Actualizar Precio"):
-                    actualizar_tasa_global("precio_beisbol", nuevo_precio_b)
-                    st.success("✅ Precio actualizado con éxito.")
-                    st.rerun()
-        else:
-            st.sidebar.markdown("---")
-            st.sidebar.subheader("🔍 Filtros de Búsqueda")
-            f_tipo_beis = st.sidebar.selectbox("Filtrar Béisbol por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Este Mes", "Todos"], key="b_beis_filtro")
+        st.caption("Control de Picheos y Registros")
 
-            if f_tipo_beis == "Rango de Fechas Personalizado":
-                col_fb1, col_fb2 = st.sidebar.columns(2)
-                with col_fb1: b_fini = st.date_input("Desde", value=date.today() - timedelta(days=15), key="beis_ini")
-                with col_fb2: b_ffin = st.date_input("Hasta", value=date.today(), key="beis_fin")
-            elif f_tipo_beis == "Esta Quincena":
-                b_fini, b_ffin = obtener_rango_quincena(date.today())
-            elif f_tipo_beis == "Este Mes":
-                b_fini = date(date.today().year, date.today().month, 1)
-                b_ffin = date.today()
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🔍 Filtros de Búsqueda")
+        f_tipo_beis = st.sidebar.selectbox("Filtrar Béisbol por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Este Mes", "Todos"], key="b_beis_filtro")
+
+        if f_tipo_beis == "Rango de Fechas Personalizado":
+            col_fb1, col_fb2 = st.sidebar.columns(2)
+            with col_fb1: b_fini = st.date_input("Desde", value=date.today() - timedelta(days=15), key="beis_ini")
+            with col_fb2: b_ffin = st.date_input("Hasta", value=date.today(), key="beis_fin")
+        elif f_tipo_beis == "Esta Quincena":
+            b_fini, b_ffin = obtener_rango_quincena(date.today())
+        elif f_tipo_beis == "Este Mes":
+            b_fini = date(date.today().year, date.today().month, 1)
+            b_ffin = date.today()
+        else:
+            b_fini = date(2020, 1, 1)
+            b_ffin = date(2035, 12, 31)
+
+        with st.expander("➕ Registrar Lote de Picheos", expanded=False):
+            p1, p2, p3 = st.columns(3)
+            with p1: f_pich = st.date_input("Fecha", value=date.today(), key="p_fich")
+            with p2: id_ctrl = st.text_input("ID Control / Partido", placeholder="Ej: BC-2026")
+            with p3: cant_pich = st.number_input("Cantidad de Picheos", min_value=1, step=1, value=100)
+
+            if st.button("💾 Guardar Picheos", use_container_width=True):
+                if not id_ctrl.strip():
+                    st.warning("Ingrese el ID de control.")
+                else:
+                    conn_p = get_db_connection()
+                    if conn_p:
+                        cur_p = conn_p.cursor()
+                        cur_p.execute("""
+                            INSERT INTO picheos (usuario_id, fecha, id_control, cantidad)
+                            VALUES (%s, %s, %s, %s);
+                        """, (user_id, f_pich, id_ctrl.strip(), int(cant_pich)))
+                        conn_p.commit()
+                        cur_p.close()
+                        conn_p.close()
+                        st.cache_data.clear()
+                        st.success("✅ Picheos guardados correctamente.")
+                        st.rerun()
+
+        conn_pb = get_db_connection()
+        if conn_pb:
+            if target_beis_user_id == 0:
+                df_picheos = pd.read_sql_query("""
+                    SELECT pi.id, u.nombre as operador, pi.fecha, pi.id_control, pi.cantidad 
+                    FROM picheos pi
+                    JOIN usuarios u ON pi.usuario_id = u.id
+                    WHERE pi.fecha BETWEEN %s AND %s
+                    ORDER BY pi.fecha DESC, pi.id DESC;
+                """, conn_pb, params=(b_fini, b_ffin))
             else:
-                b_fini = date(2020, 1, 1)
-                b_ffin = date(2035, 12, 31)
-
-            with st.expander("➕ Registrar Lote de Picheos", expanded=False):
-                p1, p2, p3 = st.columns(3)
-                with p1: f_pich = st.date_input("Fecha", value=date.today(), key="p_fich")
-                with p2: id_ctrl = st.text_input("ID Control / Partido", placeholder="Ej: BC-2026")
-                with p3: cant_pich = st.number_input("Cantidad de Picheos", min_value=1, step=1, value=100)
-
-                if st.button("💾 Guardar Picheos", use_container_width=True):
-                    if not id_ctrl.strip():
-                        st.warning("Ingrese el ID de control.")
-                    else:
-                        conn_p = get_db_connection()
-                        if conn_p:
-                            cur_p = conn_p.cursor()
-                            cur_p.execute("""
-                                INSERT INTO picheos (usuario_id, fecha, id_control, cantidad)
-                                VALUES (%s, %s, %s, %s);
-                            """, (user_id, f_pich, id_ctrl.strip(), int(cant_pich)))
-                            conn_p.commit()
-                            cur_p.close()
-                            conn_p.close()
-                            st.success("✅ Picheos guardados correctamente.")
-                            st.rerun()
-
-            conn_pb = get_db_connection()
-            if conn_pb:
                 df_picheos = pd.read_sql_query("""
                     SELECT id, fecha, id_control, cantidad 
                     FROM picheos 
                     WHERE usuario_id = %s AND fecha BETWEEN %s AND %s
                     ORDER BY fecha DESC, id DESC;
-                """, conn_pb, params=(user_id, b_fini, b_ffin))
-                conn_pb.close()
-            else:
-                df_picheos = pd.DataFrame()
+                """, conn_pb, params=(target_beis_user_id, b_fini, b_ffin))
+            conn_pb.close()
+        else:
+            df_picheos = pd.DataFrame()
 
-            st.markdown(f"### 📋 Listado de Picheos ({b_fini} al {b_ffin})")
-            if not df_picheos.empty:
-                total_p = df_picheos["cantidad"].sum()
-                precio_u = obtener_tasas_globales()["precio_beisbol"]
-                total_dolares = total_p * precio_u
+        st.markdown(f"### 📋 Listado de Picheos ({b_fini} al {b_ffin})")
+        if not df_picheos.empty:
+            total_p = df_picheos["cantidad"].sum()
+            precio_u = obtener_tasas_globales()["precio_beisbol"]
+            total_dolares = total_p * precio_u
 
-                cp1, cp2, cp3 = st.columns(3)
-                cp1.metric("⚾ Total Picheos", f"{total_p:,}")
-                cp2.metric("💵 USD Estimado", f"${total_dolares:,.2f}", f"@ ${precio_u}/u")
-                cp3.metric("📅 Registros", len(df_picheos))
+            cp1, cp2, cp3 = st.columns(3)
+            cp1.metric("⚾ Total Picheos", f"{total_p:,}")
+            cp2.metric("💵 USD Estimado", f"${total_dolares:,.2f}", f"@ ${precio_u}/u")
+            cp3.metric("📅 Registros", len(df_picheos))
 
-                st.dataframe(df_picheos, use_container_width=True, hide_index=True)
+            st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-                csv_b = df_picheos.to_csv(index=False).encode("utf-8")
-                st.download_button(
-                    "📥 Exportar Reporte de Picheos (CSV)",
-                    data=csv_b,
-                    file_name=f"esam_beisbol_{b_fini}_al_{b_ffin}.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.info("No hay registros de picheos en el rango de fechas seleccionado.")
+            csv_b = df_picheos.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "📥 Exportar Reporte de Picheos (CSV)",
+                data=csv_b,
+                file_name=f"esam_beisbol_{b_fini}_al_{b_ffin}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("No hay registros de picheos en el rango de fechas seleccionado.")
+
+    # =========================================================
+    # MÓDULO NUEVO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (SOLO ADMIN)
+    # =========================================================
+    elif opcion_menu == "⚙️ Administración de Precios por Deporte":
+        st.title("⚙️ PANEL DE CONTROL Y CONFIGURACIÓN DE TARIFAS")
+        st.caption("Ajusta en tiempo real los valores en USD asignados a cada disciplina deportiva")
+
+        tasas_actuales = obtener_tasas_globales()
+
+        tab_p_basket, tab_p_beis = st.tabs(["🏀 Tarifas de Básquetbol", "⚾ Precios de Béisbol"])
+
+        with tab_p_basket:
+            st.subheader("🏀 Tarifas y Tramos de Básquetbol")
+            with st.form("form_admin_basket_prices"):
+                st.markdown("##### 📈 Tramos Quincenales (USD por partido):")
+                cb1, cb2, cb3, cb4 = st.columns(4)
+                with cb1: nt1 = st.number_input("Tramo 1 (1 - 11 partidos)", value=tasas_actuales["tramo_1"], step=0.25)
+                with cb2: nt2 = st.number_input("Tramo 2 (12 - 14 partidos)", value=tasas_actuales["tramo_2"], step=0.25)
+                with cb3: nt3 = st.number_input("Tramo 3 (15 - 29 partidos)", value=tasas_actuales["tramo_3"], step=0.25)
+                with cb4: nt4 = st.number_input("Tramo 4 (30+ partidos)", value=tasas_actuales["tramo_4"], step=0.25)
+
+                st.markdown("---")
+                st.markdown("##### ⚡ Modalidad Especial En Vivo:")
+                cbe1, cbe2 = st.columns(2)
+                with cbe1: n_norm = st.number_input("Partido En Vivo Normal ($)", value=tasas_actuales["en_vivo_normal"], step=0.50)
+                with cbe2: n_nba = st.number_input("Partido En Vivo NBA ($)", value=tasas_actuales["en_vivo_nba"], step=0.50)
+
+                sub_b_prices = st.form_submit_button("💾 Actualizar Tarifas de Básquetbol", use_container_width=True)
+                if sub_b_prices:
+                    actualizar_tasa_global("tasa_tramo_1", nt1)
+                    actualizar_tasa_global("tasa_tramo_2", nt2)
+                    actualizar_tasa_global("tasa_tramo_3", nt3)
+                    actualizar_tasa_global("tasa_tramo_4", nt4)
+                    actualizar_tasa_global("tasa_en_vivo_normal", n_norm)
+                    actualizar_tasa_global("tasa_en_vivo_nba", n_nba)
+                    st.success("✅ Tarifas de Básquetbol actualizadas con éxito.")
+                    st.rerun()
+
+        with tab_p_beis:
+            st.subheader("⚾ Tarifa Unitaria de Béisbol")
+            with st.form("form_admin_beis_prices"):
+                n_precio_beis = st.number_input("Precio por Picheo Registrado (USD)", value=tasas_actuales["precio_beisbol"], format="%.4f", step=0.001)
+                sub_beis_price = st.form_submit_button("💾 Actualizar Precio de Béisbol", use_container_width=True)
+                if sub_beis_price:
+                    actualizar_tasa_global("precio_beisbol", n_precio_beis)
+                    st.success("✅ Precio por picheo de Béisbol actualizado con éxito.")
+                    st.rerun()
 
     # =========================================================
     # MÓDULO NUEVO: SEGURIDAD Y CREDENCIALES
