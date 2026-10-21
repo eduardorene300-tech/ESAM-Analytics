@@ -20,7 +20,8 @@ def inicializar_tablas():
         conn = obtener_conexion()
         cursor = conn.cursor()
         
-        # Tabla de usuarios
+        # Bloque inteligente: Verifica si la tabla usuarios existe pero le falta la columna password.
+        # Si tiene estructura vieja, la recrea limpia de forma automática.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS usuarios (
                 id SERIAL PRIMARY KEY,
@@ -28,6 +29,20 @@ def inicializar_tablas():
                 password VARCHAR(255) NOT NULL,
                 rol VARCHAR(20) NOT NULL
             );
+        """)
+        cursor.execute("""
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='usuarios' and column_name='password') THEN
+                    DROP TABLE IF EXISTS usuarios CASCADE;
+                    CREATE TABLE usuarios (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(50) UNIQUE NOT NULL,
+                        password VARCHAR(255) NOT NULL,
+                        rol VARCHAR(20) NOT NULL
+                    );
+                END IF;
+            END $$;
         """)
         
         # Tabla de registros de juegos y ganancias
@@ -125,7 +140,6 @@ else:
         st.title("📊 Panel Principal - Ganancias y Métricas Unificadas")
         st.write("Vista simultánea del desempeño y ganancias de Béisbol y Básquetbol.")
         
-        # Consultar métricas reales desde la base de datos
         try:
             conn = obtener_conexion()
             query = "SELECT deporte, COALESCE(SUM(ganancia), 0), COUNT(*) FROM registros_juegos GROUP BY deporte;"
@@ -147,7 +161,6 @@ else:
             
             total_acumulado = ganancia_beisbol + ganancia_basket
             
-            # Tarjetas métricas
             col_b1, col_b2, col_b3 = st.columns(3)
             with col_b1:
                 st.metric(label="⚾ Béisbol (Ganancias)", value=f"${ganancia_beisbol:.2f}", delta=f"{juegos_beisbol} registros")
@@ -159,7 +172,6 @@ else:
             st.divider()
             st.subheader("Historial de Actividad Reciente")
             
-            # Mostrar tabla de registros
             conn = obtener_conexion()
             df_historial = pd.read_sql("SELECT usuario, deporte, fecha, detalles, cantidad_picheos, ganancia FROM registros_juegos ORDER BY id DESC LIMIT 15;", conn)
             conn.close()
