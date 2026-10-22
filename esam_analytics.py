@@ -428,7 +428,7 @@ else:
     username_actual = st.session_state.user_info["username"].lower().strip()
     rol_actual = st.session_state.user_info.get("rol", "operador")
 
-    # RESTRICCIÓN STRICTA DE ADMINISTRADOR (SÓLO USUARIO 'admin')
+    # RESTRICCIÓN EXCLUSIVA DE ADMINISTRADOR (SOLO PARA LA CUENTA 'admin')
     es_admin_estricto = (username_actual == "admin")
 
     st.sidebar.title("🏆 ESAM Analytics")
@@ -449,7 +449,7 @@ else:
 
     st.sidebar.markdown("---")
     
-    # MOSTRAR EL BOTÓN MODO ADMIN SOLO AL USUARIO 'admin'
+    # EL BOTÓN Y MODO ADMIN SOLO APARACE PARA EL USUARIO 'admin'
     if es_admin_estricto:
         modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=True)
         es_admin = modo_super_admin
@@ -468,20 +468,23 @@ else:
         st.title("📊 Panel General y Ganancias Totales")
         
         target_user_id = user_id
+        opcion_label = f"👤 mis datos ({user_name})"
+
         if es_admin:
             df_usrs = obtener_todos_los_usuarios()
             if not df_usrs.empty:
-                opciones_u = {"🌐 TODOS LOS OPERADORES (CONSOLIDADO GLOBAL)": 0}
+                opciones_u = {"🌐 CONSOLIDADO GLOBAL (TODOS LOS USUARIOS)": 0}
                 for _, r_u in df_usrs.iterrows():
                     opciones_u[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
                 
-                u_seleccionado = st.selectbox("👑 [ADMIN] Seleccionar Operador para Inspección de Datos:", list(opciones_u.keys()))
+                u_seleccionado = st.selectbox("👑 [ADMIN] Inspeccionar Datos de Usuario Individual / Global:", list(opciones_u.keys()))
                 target_user_id = opciones_u[u_seleccionado]
+                opcion_label = u_seleccionado
 
         if target_user_id == 0:
             st.caption("Consolidado financiero global de TODOS los operadores en el sistema")
         else:
-            st.caption(f"Consolidado financiero de operaciones — {user_name}")
+            st.caption(f"Mostrando datos individuales de: **{opcion_label}**")
 
         conn_gen = get_db_connection()
         total_g_basket = 0.0
@@ -536,7 +539,7 @@ else:
         if es_admin:
             df_usrs = obtener_todos_los_usuarios()
             if not df_usrs.empty:
-                opciones_b = {"🌐 TODOS LOS OPERADORES": 0}
+                opciones_b = {"🌐 CONSOLIDADO GLOBAL (TODOS LOS USUARIOS)": 0}
                 for _, r_u in df_usrs.iterrows():
                     opciones_b[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
                 
@@ -691,7 +694,7 @@ else:
                 mime="text/csv"
             )
         else:
-            st.info("No hay registros de básquetbol en el rango de fechas seleccionado. Cambie el filtro en el menú lateral a 'Todos' si no ve los registros.")
+            st.info("No hay registros de básquetbol para la selección actual.")
 
     # =========================================================
     # MÓDULO 2: BÉISBOL
@@ -703,7 +706,7 @@ else:
         if es_admin:
             df_usrs = obtener_todos_los_usuarios()
             if not df_usrs.empty:
-                opciones_beis = {"🌐 TODOS LOS OPERADORES": 0}
+                opciones_beis = {"🌐 CONSOLIDADO GLOBAL (TODOS LOS USUARIOS)": 0}
                 for _, r_u in df_usrs.iterrows():
                     opciones_beis[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
                 
@@ -834,7 +837,7 @@ else:
                 mime="text/csv"
             )
         else:
-            st.info("No hay registros de picheos en el rango de fechas seleccionado.")
+            st.info("No hay registros de picheos para la selección actual.")
 
     # =========================================================
     # MÓDULO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (EXCLUSIVO ADMIN)
