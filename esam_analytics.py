@@ -492,7 +492,7 @@ else:
         st.rerun()
 
     # =========================================================
-    # MÓDULO: PANEL GENERAL Y GANANCIAS TOTALES (CONSOLIDADO 2 DEPORTES)
+    # MÓDULO: PANTALLA PRINCIPAL / PANEL GENERAL Y GANANCIAS TOTALES
     # =========================================================
     if opcion_menu == "📊 Panel General y Ganancias":
         st.title("📊 Panel General y Ganancias Totales")
@@ -571,7 +571,7 @@ else:
         st.info("Este panel unifica en tiempo real el rendimiento financiero obtenido en los dos deportes analizados.")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (QUINCENAS SEPARADAS Y CRUD)
+    # MÓDULO 1: BÁSQUETBOL (QUINCENAS 1-15 / 16-FIN Y CRUD)
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -596,8 +596,8 @@ else:
         filtro_b_tipo = st.sidebar.selectbox(
             "Seleccionar Quincena / Periodo:",
             [
-                "1.ª Quincena del Mes (Días 1 al 15)",
-                "2.ª Quincena del Mes (Días 16 al final)",
+                "1. 1.ª Quincena (Días 1 al 15)",
+                "2. 2.ª Quincena (Días 16 al final de mes)",
                 "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
@@ -607,9 +607,9 @@ else:
             key="b_filtro_sel"
         )
 
-        if filtro_b_tipo == "1.ª Quincena del Mes (Días 1 al 15)":
+        if "1. 1.ª Quincena" in filtro_b_tipo:
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif filtro_b_tipo == "2.ª Quincena del Mes (Días 16 al final)":
+        elif "2. 2.ª Quincena" in filtro_b_tipo:
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
         elif filtro_b_tipo == "Quincena Actual":
             f_ini, f_fin = obtener_rango_quincena(hoy)
@@ -715,13 +715,13 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            # CRUD: BOTONES PARA MODIFICAR O ELIMINAR CARGAS
-            with st.expander("🛠️ Modificar o Eliminar Cargas de Básquetbol"):
-                tab_eb1, tab_eb2 = st.tabs(["✏️ Modificar Partido", "🗑️ Eliminar Partido"])
+            # CRUD: BOTONES PARA MODIFICAR, CORREGIR O ELIMINAR CARGAS
+            with st.expander("🛠️ Modificar, Corregir o Eliminar Cargas de Básquetbol"):
+                tab_eb1, tab_eb2 = st.tabs(["✏️ Modificar / Corregir Partido", "🗑️ Eliminar Partido"])
                 
                 with tab_eb1:
                     list_ids_b = df_basket["id"].tolist()
-                    id_edit_b = st.selectbox("Seleccione el ID del partido a modificar:", list_ids_b, key="sel_edit_b")
+                    id_edit_b = st.selectbox("Seleccione el ID del partido a corregir:", list_ids_b, key="sel_edit_b")
                     
                     row_b = df_basket[df_basket["id"] == id_edit_b].iloc[0]
                     with st.form("form_edit_b"):
@@ -730,7 +730,7 @@ else:
                         t_b = st.text_input("Tiempo de Ejecución", value=str(row_b["tiempo_ejecucion"]))
                         tar_b = st.number_input("Tarifa ($)", value=float(row_b["tarifa"]), step=0.50)
                         
-                        if st.form_submit_button("💾 Guardar Cambios"):
+                        if st.form_submit_button("💾 Guardar Correcciones"):
                             conn_eb = get_db_connection()
                             if conn_eb:
                                 cur_eb = conn_eb.cursor()
@@ -739,7 +739,7 @@ else:
                                 cur_eb.close()
                                 conn_eb.close()
                                 st.cache_data.clear()
-                                st.success("✅ Partido modificado con éxito.")
+                                st.success("✅ Partido modificado y corregido con éxito.")
                                 st.rerun()
 
                 with tab_eb2:
@@ -767,7 +767,7 @@ else:
             st.info("No hay registros de básquetbol para la quincena o periodo seleccionado.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (QUINCENAS SEPARADAS Y CRUD)
+    # MÓDULO 2: BÉISBOL (QUINCENAS 1-15 / 16-FIN Y CRUD)
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -792,8 +792,8 @@ else:
         f_tipo_beis = st.sidebar.selectbox(
             "Seleccionar Quincena / Periodo Béisbol:",
             [
-                "1.ª Quincena del Mes (Días 1 al 15)",
-                "2.ª Quincena del Mes (Días 16 al final)",
+                "1. 1.ª Quincena (Días 1 al 15)",
+                "2. 2.ª Quincena (Días 16 al final de mes)",
                 "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
@@ -803,9 +803,9 @@ else:
             key="b_beis_filtro"
         )
 
-        if f_tipo_beis == "1.ª Quincena del Mes (Días 1 al 15)":
+        if "1. 1.ª Quincena" in f_tipo_beis:
             b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
-        elif f_tipo_beis == "2.ª Quincena del Mes (Días 16 al final)":
+        elif "2. 2.ª Quincena" in f_tipo_beis:
             b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=2)
         elif f_tipo_beis == "Quincena Actual":
             b_fini, b_ffin = obtener_rango_quincena(hoy_b)
@@ -890,13 +890,13 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-            # CRUD: BOTONES PARA MODIFICAR O ELIMINAR LOTES
-            with st.expander("🛠️ Modificar o Eliminar Lotes de Picheos"):
-                tab_ep1, tab_ep2 = st.tabs(["✏️ Modificar Lote", "🗑️ Eliminar Lote"])
+            # CRUD: BOTONES PARA MODIFICAR, CORREGIR O ELIMINAR LOTES
+            with st.expander("🛠️ Modificar, Corregir o Eliminar Lotes de Picheos"):
+                tab_ep1, tab_ep2 = st.tabs(["✏️ Modificar / Corregir Lote", "🗑️ Eliminar Lote"])
                 
                 with tab_ep1:
                     list_ids_p = df_picheos["id"].tolist()
-                    id_edit_p = st.selectbox("Seleccione el ID del lote a modificar:", list_ids_p, key="sel_edit_p")
+                    id_edit_p = st.selectbox("Seleccione el ID del lote a corregir:", list_ids_p, key="sel_edit_p")
                     
                     row_p = df_picheos[df_picheos["id"] == id_edit_p].iloc[0]
                     with st.form("form_edit_p"):
@@ -904,7 +904,7 @@ else:
                         id_c_p = st.text_input("ID Control / Partido", value=str(row_p["id_control"]))
                         cant_p = st.number_input("Cantidad de Picheos", value=int(row_p["cantidad"]), step=1, min_value=1)
                         
-                        if st.form_submit_button("💾 Guardar Cambios"):
+                        if st.form_submit_button("💾 Guardar Correcciones"):
                             conn_ep = get_db_connection()
                             if conn_ep:
                                 cur_ep = conn_ep.cursor()
@@ -913,7 +913,7 @@ else:
                                 cur_ep.close()
                                 conn_ep.close()
                                 st.cache_data.clear()
-                                st.success("✅ Lote de picheos modificado con éxito.")
+                                st.success("✅ Lote de picheos modificado y corregido con éxito.")
                                 st.rerun()
 
                 with tab_ep2:
