@@ -255,7 +255,7 @@ def obtener_tarifa_basket(tipo_partido, cant_partidos=0):
 
 
 # =========================================================
-# 6. GESTIÓN DE USUARIOS Y MANEJO DE QUINCENAS EXACTAS
+# 6. GESTIÓN DE USUARIOS Y OPERACIONES
 # =========================================================
 def registrar_usuario(username, nombre, password, rol="operador"):
     conn = get_db_connection()
@@ -351,32 +351,17 @@ def obtener_todos_los_usuarios():
         return pd.DataFrame()
 
 
-def obtener_rango_quincena(fecha_ref, numero_quincena=None):
-    """
-    Retorna el rango exacto de fechas para:
-    - Q1: Días 1 al 15 del mes.
-    - Q2: Días 16 al último día del mes.
-    """
-    anio = fecha_ref.year
-    mes = fecha_ref.month
-    
-    if numero_quincena == 1:
-        return date(anio, mes, 1), date(anio, mes, 15)
-    elif numero_quincena == 2:
-        if mes == 12:
-            fin_mes = date(anio, 12, 31)
-        else:
-            fin_mes = date(anio, mes + 1, 1) - timedelta(days=1)
-        return date(anio, mes, 16), fin_mes
+def obtener_rango_quincena(fecha_ref):
+    if fecha_ref.day <= 15:
+        inicio_q = date(fecha_ref.year, fecha_ref.month, 1)
+        fin_q = date(fecha_ref.year, fecha_ref.month, 15)
     else:
-        if fecha_ref.day <= 15:
-            return date(anio, mes, 1), date(anio, mes, 15)
+        inicio_q = date(fecha_ref.year, fecha_ref.month, 16)
+        if fecha_ref.month == 12:
+            fin_q = date(fecha_ref.year, 12, 31)
         else:
-            if mes == 12:
-                fin_mes = date(anio, 12, 31)
-            else:
-                fin_mes = date(anio, mes + 1, 1) - timedelta(days=1)
-            return date(anio, mes, 16), fin_mes
+            fin_q = date(fecha_ref.year, fecha_ref.month + 1, 1) - timedelta(days=1)
+    return inicio_q, fin_q
 
 
 # =========================================================
@@ -443,6 +428,7 @@ else:
     username_actual = st.session_state.user_info["username"].lower().strip()
     rol_actual = st.session_state.user_info.get("rol", "operador")
 
+    # RESTRICCIÓN EXCLUSIVA DE ADMINISTRADOR (SOLO PARA LA CUENTA 'admin')
     es_admin_estricto = (username_actual == "admin")
 
     st.sidebar.title("🏆 ESAM Analytics")
@@ -463,6 +449,7 @@ else:
 
     st.sidebar.markdown("---")
     
+    # EL BOTÓN Y MODO ADMIN SOLO APARACE PARA EL USUARIO 'admin'
     if es_admin_estricto:
         modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=True)
         es_admin = modo_super_admin
@@ -543,7 +530,7 @@ else:
         st.info("Este panel consolida de forma automática el rendimiento económico de los análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (FILTRADO POR QUINCENA SEPARADA)
+    # MÓDULO 1: BÁSQUETBOL
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -559,56 +546,26 @@ else:
                 u_b_sel = st.sidebar.selectbox("👑 Ver Básquetbol de:", list(opciones_b.keys()))
                 target_b_user_id = opciones_b[u_b_sel]
 
-        st.caption("Control Financiero y Tiempos de Partidos por Quincena")
+        st.caption("Control Financiero y Tiempos de Partidos")
 
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
-        
-        hoy = date.today()
-        filtro_b_tipo = st.sidebar.selectbox(
-            "Seleccionar Quincena / Periodo:",
-            [
-                "1.ª Quincena del Mes (Días 1 al 15)",
-                "2.ª Quincena del Mes (Días 16 al fin)",
-                "Quincena Actual",
-                "Quincena Anterior",
-                "Este Mes Completo",
-                "Todos los Registros",
-                "Rango de Fechas Personalizado"
-            ],
-            key="b_filtro_sel"
-        )
+        st.sidebar.subheader("🔍 Filtros de Búsqueda")
+        filtro_b_tipo = st.sidebar.selectbox("Filtrar por:", ["Todos", "Esta Quincena", "Hoy", "Este Mes", "Rango de Fechas Personalizado"], key="b_filtro_sel")
 
-        if filtro_b_tipo == "1.ª Quincena del Mes (Días 1 al 15)":
-            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif filtro_b_tipo == "2.ª Quincena del Mes (Días 16 al fin)":
-            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
-        elif filtro_b_tipo == "Quincena Actual":
-            f_ini, f_fin = obtener_rango_quincena(hoy)
-        elif filtro_b_tipo == "Quincena Anterior":
-            if hoy.day <= 15:
-                # Quincena anterior es la 2da quincena del mes pasado
-                primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
-                ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-                f_ini, f_fin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
-            else:
-                # Quincena anterior es la 1ra quincena de este mes
-                f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif filtro_b_tipo == "Este Mes Completo":
-            f_ini = date(hoy.year, hoy.month, 1)
-            if hoy.month == 12:
-                f_fin = date(hoy.year, 12, 31)
-            else:
-                f_fin = date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
-        elif filtro_b_tipo == "Rango de Fechas Personalizado":
+        if filtro_b_tipo == "Rango de Fechas Personalizado":
             col_fd1, col_fd2 = st.sidebar.columns(2)
             with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="b_f_ini")
             with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="b_f_fin")
+        elif filtro_b_tipo == "Hoy":
+            f_ini = f_fin = date.today()
+        elif filtro_b_tipo == "Esta Quincena":
+            f_ini, f_fin = obtener_rango_quincena(date.today())
+        elif filtro_b_tipo == "Este Mes":
+            f_ini = date(date.today().year, date.today().month, 1)
+            f_fin = date.today()
         else:
             f_ini = date(2020, 1, 1)
             f_fin = date(2035, 12, 31)
-
-        st.info(f"📅 **Periodo Evaluado:** Del **{f_ini.strftime('%d/%m/%Y')}** al **{f_fin.strftime('%d/%m/%Y')}**")
 
         with st.expander("➕ Registrar Nuevo Partido de Básquetbol", expanded=False):
             col_m1, _ = st.columns([2, 2])
@@ -679,13 +636,13 @@ else:
         else:
             df_basket = pd.DataFrame()
 
-        st.markdown(f"### 📋 Registros de Básquetbol ({f_ini.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')})")
+        st.markdown(f"### 📋 Registros de Básquetbol ({f_ini} al {f_fin})")
         if not df_basket.empty:
             total_ganancias = df_basket["tarifa"].astype(float).sum()
             col_k1, col_k2, col_k3 = st.columns(3)
-            col_k1.metric("🏀 Total Partidos Quincena", len(df_basket))
-            col_k2.metric("💵 Total Ganancias Quincena", f"${total_ganancias:.2f}")
-            col_k3.metric("📅 Rango Evaluado", f"{f_ini.strftime('%d/%m')} - {f_fin.strftime('%d/%m/%Y')}")
+            col_k1.metric("🏀 Total Partidos", len(df_basket))
+            col_k2.metric("💵 Total Ganancias", f"${total_ganancias:.2f}")
+            col_k3.metric("📅 Rango", f"{f_ini} al {f_fin}")
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
@@ -731,16 +688,16 @@ else:
 
             csv_b = df_basket.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Exportar Reporte Quincenal de Básquetbol (CSV)",
+                "📥 Exportar Reporte de Básquetbol (CSV)",
                 data=csv_b,
-                file_name=f"esam_basket_quincena_{f_ini}_al_{f_fin}.csv",
+                file_name=f"esam_basket_{f_ini}_al_{f_fin}.csv",
                 mime="text/csv"
             )
         else:
-            st.info("No hay registros de básquetbol para la quincena o periodo seleccionado.")
+            st.info("No hay registros de básquetbol para la selección actual.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (FILTRADO POR QUINCENA SEPARADA)
+    # MÓDULO 2: BÉISBOL
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -756,54 +713,24 @@ else:
                 u_beis_sel = st.sidebar.selectbox("👑 Ver Béisbol de:", list(opciones_beis.keys()))
                 target_beis_user_id = opciones_beis[u_beis_sel]
 
-        st.caption("Control de Picheos y Registros por Quincena")
+        st.caption("Control de Picheos y Registros")
 
         st.sidebar.markdown("---")
-        st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
-        
-        hoy_b = date.today()
-        f_tipo_beis = st.sidebar.selectbox(
-            "Seleccionar Quincena / Periodo Béisbol:",
-            [
-                "1.ª Quincena del Mes (Días 1 al 15)",
-                "2.ª Quincena del Mes (Días 16 al fin)",
-                "Quincena Actual",
-                "Quincena Anterior",
-                "Este Mes Completo",
-                "Todos los Registros",
-                "Rango de Fechas Personalizado"
-            ],
-            key="b_beis_filtro"
-        )
+        st.sidebar.subheader("🔍 Filtros de Búsqueda")
+        f_tipo_beis = st.sidebar.selectbox("Filtrar Béisbol por:", ["Todos", "Esta Quincena", "Este Mes", "Rango de Fechas Personalizado"], key="b_beis_filtro")
 
-        if f_tipo_beis == "1.ª Quincena del Mes (Días 1 al 15)":
-            b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
-        elif f_tipo_beis == "2.ª Quincena del Mes (Días 16 al fin)":
-            b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=2)
-        elif f_tipo_beis == "Quincena Actual":
-            b_fini, b_ffin = obtener_rango_quincena(hoy_b)
-        elif f_tipo_beis == "Quincena Anterior":
-            if hoy_b.day <= 15:
-                primer_dia_mes_actual = date(hoy_b.year, hoy_b.month, 1)
-                ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-                b_fini, b_ffin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
-            else:
-                b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
-        elif f_tipo_beis == "Este Mes Completo":
-            b_fini = date(hoy_b.year, hoy_b.month, 1)
-            if hoy_b.month == 12:
-                b_ffin = date(hoy_b.year, 12, 31)
-            else:
-                b_ffin = date(hoy_b.year, hoy_b.month + 1, 1) - timedelta(days=1)
-        elif f_tipo_beis == "Rango de Fechas Personalizado":
+        if f_tipo_beis == "Rango de Fechas Personalizado":
             col_fb1, col_fb2 = st.sidebar.columns(2)
             with col_fb1: b_fini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="beis_ini")
             with col_fb2: b_ffin = st.date_input("Hasta", value=date.today(), key="beis_fin")
+        elif f_tipo_beis == "Esta Quincena":
+            b_fini, b_ffin = obtener_rango_quincena(date.today())
+        elif f_tipo_beis == "Este Mes":
+            b_fini = date(date.today().year, date.today().month, 1)
+            b_ffin = date.today()
         else:
             b_fini = date(2020, 1, 1)
             b_ffin = date(2035, 12, 31)
-
-        st.info(f"📅 **Periodo Evaluado Béisbol:** Del **{b_fini.strftime('%d/%m/%Y')}** al **{b_ffin.strftime('%d/%m/%Y')}**")
 
         with st.expander("➕ Registrar Lote de Picheos", expanded=False):
             p1, p2, p3 = st.columns(3)
@@ -850,16 +777,16 @@ else:
         else:
             df_picheos = pd.DataFrame()
 
-        st.markdown(f"### 📋 Listado de Picheos ({b_fini.strftime('%d/%m/%Y')} al {b_ffin.strftime('%d/%m/%Y')})")
+        st.markdown(f"### 📋 Listado de Picheos ({b_fini} al {b_ffin})")
         if not df_picheos.empty:
             total_p = df_picheos["cantidad"].sum()
             precio_u = obtener_tasas_globales()["precio_beisbol"]
             total_dolares = total_p * precio_u
 
             cp1, cp2, cp3 = st.columns(3)
-            cp1.metric("⚾ Total Picheos Quincena", f"{total_p:,}")
+            cp1.metric("⚾ Total Picheos", f"{total_p:,}")
             cp2.metric("💵 USD Estimado", f"${total_dolares:,.2f}", f"@ ${precio_u}/u")
-            cp3.metric("📅 Lotes Registrados", len(df_picheos))
+            cp3.metric("📅 Registros", len(df_picheos))
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
@@ -904,13 +831,13 @@ else:
 
             csv_b = df_picheos.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Exportar Reporte Quincenal de Béisbol (CSV)",
+                "📥 Exportar Reporte de Béisbol (CSV)",
                 data=csv_b,
-                file_name=f"esam_beisbol_quincena_{b_fini}_al_{b_ffin}.csv",
+                file_name=f"esam_beisbol_{b_fini}_al_{b_ffin}.csv",
                 mime="text/csv"
             )
         else:
-            st.info("No hay registros de picheos para la quincena o periodo seleccionado.")
+            st.info("No hay registros de picheos para la selección actual.")
 
     # =========================================================
     # MÓDULO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (EXCLUSIVO ADMIN)
