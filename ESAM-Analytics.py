@@ -6,7 +6,7 @@ from psycopg2.extras import RealDictCursor
 import streamlit as st
 
 # =========================================================
-# 1. CONFIGURACIÓN GENERAL DE LA PÁGINA
+# 1. CONFIGURACIÓN GENERAL DE LA PÁGINA Y ESTILOS
 # =========================================================
 st.set_page_config(
     page_title="ESAM Analytics 360°",
