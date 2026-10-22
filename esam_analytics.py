@@ -81,145 +81,109 @@ def get_db_connection():
 # =========================================================
 @st.cache_resource
 def init_db():
-    """Crea/migra el esquema sin abortar toda la transacción si falta una columna legacy."""
     conn = get_db_connection()
-    if not conn:
-        return False
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS usuarios (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR(50) UNIQUE NOT NULL,
+                    nombre VARCHAR(100) NOT NULL,
+                    password_hash VARCHAR(64) NOT NULL,
+                    rol VARCHAR(30) DEFAULT 'operador',
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id SERIAL PRIMARY KEY,
-                username VARCHAR(50) UNIQUE NOT NULL,
-                nombre VARCHAR(100) NOT NULL,
-                password_hash VARCHAR(255) NOT NULL DEFAULT '',
-                rol VARCHAR(30) DEFAULT 'operador',
-                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
-        cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) DEFAULT ''; ")
-        cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
-        cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-        cur.execute("ALTER TABLE usuarios ALTER COLUMN password_hash TYPE VARCHAR(255);")
-
-        # Algunas versiones anteriores guardaban una columna `password` en texto plano.
-        # Solo se modifica si existe: evitar un ALTER fallido que revierta toda la migración.
-        cur.execute("""
-            SELECT is_nullable FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'usuarios' AND column_name = 'password';
-        """)
-        legacy_password_col = cur.fetchone()
-        if legacy_password_col:
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
+            cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+            
             try:
                 cur.execute("ALTER TABLE usuarios ALTER COLUMN password DROP NOT NULL;")
             except Exception:
-                # Si el proveedor no permite el cambio, continuamos y el alta admin usa fallback.
                 conn.rollback()
                 cur = conn.cursor()
-                cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
-                cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) DEFAULT ''; ")
-                cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
-                cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-                cur.execute("ALTER TABLE usuarios ALTER COLUMN password_hash TYPE VARCHAR(255);")
 
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS partidos (
-                id SERIAL PRIMARY KEY,
-                usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-                codigo_partido VARCHAR(50) NOT NULL,
-                fecha DATE NOT NULL,
-                tiempo_ejecucion VARCHAR(30),
-                tarifa NUMERIC(10, 2) DEFAULT 0.00,
-                tipo_partido VARCHAR(30) DEFAULT 'quincenal',
-                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS picheos (
-                id SERIAL PRIMARY KEY,
-                usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
-                fecha DATE NOT NULL,
-                id_control VARCHAR(50) NOT NULL,
-                cantidad INTEGER NOT NULL,
-                precio_unitario NUMERIC(10, 4),
-                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        cur.execute("ALTER TABLE picheos ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC(10, 4);")
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS configuracion_global (
-                clave VARCHAR(50) PRIMARY KEY,
-                valor NUMERIC(10, 4) NOT NULL
-            );
-        """)
-
-        defaults = [
-            ("tasa_tramo_1", 6.00), ("tasa_tramo_2", 6.50),
-            ("tasa_tramo_3", 7.00), ("tasa_tramo_4", 8.00),
-            ("tasa_en_vivo_normal", 12.00), ("tasa_en_vivo_nba", 18.50),
-            ("precio_beisbol", 0.024),
-        ]
-        for clave, val in defaults:
             cur.execute("""
-                INSERT INTO configuracion_global (clave, valor) VALUES (%s, %s)
-                ON CONFLICT (clave) DO NOTHING;
-            """, (clave, val))
+                CREATE TABLE IF NOT EXISTS partidos (
+                    id SERIAL PRIMARY KEY,
+                    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+                    codigo_partido VARCHAR(50) NOT NULL,
+                    fecha DATE NOT NULL,
+                    tiempo_ejecucion VARCHAR(30),
+                    tarifa NUMERIC(10, 2) DEFAULT 0.00,
+                    tipo_partido VARCHAR(30) DEFAULT 'quincenal',
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
 
-        # Los registros históricos sin precio reciben la tarifa vigente una sola vez.
-        cur.execute("""
-            UPDATE picheos SET precio_unitario = (
-                SELECT valor FROM configuracion_global WHERE clave = 'precio_beisbol'
-            ) WHERE precio_unitario IS NULL;
-        """)
-
-        admin_hash = hash_password("admin123")
-        # Guardar un punto de retorno para que un esquema antiguo no revierta las migraciones.
-        cur.execute("SAVEPOINT crear_usuario_admin")
-        cur.execute("""
-            SELECT is_nullable FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'usuarios' AND column_name = 'password';
-        """)
-        legacy_password_info = cur.fetchone()
-        legacy_password_required = bool(legacy_password_info and legacy_password_info[0] == 'NO')
-        try:
-            if legacy_password_required:
-                cur.execute("""
-                    INSERT INTO usuarios (username, nombre, password, password_hash, rol)
-                    VALUES ('admin', 'Administrador Global', 'admin123', %s, 'admin')
-                    ON CONFLICT (username) DO NOTHING;
-                """, (admin_hash,))
-            else:
-                cur.execute("""
-                    INSERT INTO usuarios (username, nombre, password_hash, rol)
-                    VALUES ('admin', 'Administrador Global', %s, 'admin')
-                    ON CONFLICT (username) DO NOTHING;
-                """, (admin_hash,))
-            cur.execute("RELEASE SAVEPOINT crear_usuario_admin")
-        except Exception:
-            cur.execute("ROLLBACK TO SAVEPOINT crear_usuario_admin")
-            # Compatibilidad final con esquemas antiguos donde password sigue siendo NOT NULL.
             cur.execute("""
-                INSERT INTO usuarios (username, nombre, password, password_hash, rol)
-                VALUES ('admin', 'Administrador Global', 'admin123', %s, 'admin')
+                CREATE TABLE IF NOT EXISTS picheos (
+                    id SERIAL PRIMARY KEY,
+                    usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+                    fecha DATE NOT NULL,
+                    id_control VARCHAR(50) NOT NULL,
+                    cantidad INTEGER NOT NULL,
+                    precio_unitario NUMERIC(10, 4),
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            # Guarda la tarifa aplicada a cada lote para que futuros cambios de precio
+            # no alteren las ganancias históricas de los registros nuevos.
+            cur.execute("ALTER TABLE picheos ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC(10, 4);")
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS configuracion_global (
+                    clave VARCHAR(50) PRIMARY KEY,
+                    valor NUMERIC(10, 4) NOT NULL
+                );
+            """)
+
+            defaults = [
+                ("tasa_tramo_1", 6.00),
+                ("tasa_tramo_2", 6.50),
+                ("tasa_tramo_3", 7.00),
+                ("tasa_tramo_4", 8.00),
+                ("tasa_en_vivo_normal", 12.00),
+                ("tasa_en_vivo_nba", 18.50),
+                ("precio_beisbol", 0.024),
+            ]
+            for clave, val in defaults:
+                cur.execute("""
+                    INSERT INTO configuracion_global (clave, valor) 
+                    VALUES (%s, %s) 
+                    ON CONFLICT (clave) DO NOTHING;
+                """, (clave, val))
+
+            # Los lotes antiguos no tenían tarifa guardada: se fija la tarifa actual
+            # una sola vez para que no cambie cada vez que el admin edite los precios.
+            cur.execute("""
+                UPDATE picheos
+                SET precio_unitario = (
+                    SELECT valor FROM configuracion_global WHERE clave = 'precio_beisbol'
+                )
+                WHERE precio_unitario IS NULL;
+            """)
+
+            # Crear la cuenta admin solo si no existe; nunca sobrescribir su contraseña al iniciar.
+            admin_hash = hash_password("admin123")
+            cur.execute("""
+                INSERT INTO usuarios (username, nombre, password_hash, rol)
+                VALUES ('admin', 'Administrador Global', %s, 'admin')
                 ON CONFLICT (username) DO NOTHING;
             """, (admin_hash,))
-            cur.execute("RELEASE SAVEPOINT crear_usuario_admin")
 
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True
-    except Exception as e:
-        try:
-            conn.rollback()
+            conn.commit()
+            cur.close()
             conn.close()
-        except Exception:
-            pass
-        st.error(f"❌ Error al inicializar tablas: {e}")
-        return False
-
+            return True
+        except Exception as e:
+            st.error(f"❌ Error al inicializar tablas: {e}")
+            return False
+    return False
 
 init_db()
 
@@ -327,73 +291,46 @@ def registrar_usuario(username, nombre, password, rol="operador"):
 def autenticar_usuario(username, password):
     user_clean = username.lower().strip()
     pass_clean = password.strip()
+
+
     conn = get_db_connection()
-    if not conn:
-        return None
-    try:
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("""
-            SELECT 1 FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'usuarios' AND column_name = 'password';
-        """)
-        tiene_password_legacy = cur.fetchone() is not None
-        pwd_hash = hash_password(pass_clean)
-        if tiene_password_legacy:
+    if conn:
+        try:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            pwd_hash = hash_password(pass_clean)
             cur.execute("""
                 SELECT id, username, nombre, rol FROM usuarios
                 WHERE username = %s AND (password_hash = %s OR password = %s);
             """, (user_clean, pwd_hash, pass_clean))
-        else:
-            cur.execute("""
-                SELECT id, username, nombre, rol FROM usuarios
-                WHERE username = %s AND password_hash = %s;
-            """, (user_clean, pwd_hash))
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
-        return user
-    except Exception as e:
-        try:
-            conn.rollback()
+            user = cur.fetchone()
+            cur.close()
             conn.close()
-        except Exception:
-            pass
-        st.error(f"Error al autenticar: {e}")
-        return None
+            return user
+        except Exception as e:
+            st.error(f"Error al autenticar: {e}")
+            return None
+    return None
 
 
 def cambiar_password_usuario(user_id, nueva_password):
     conn = get_db_connection()
-    if not conn:
-        return False, "❌ Error de conexión a BD."
-    try:
-        cur = conn.cursor()
-        pwd_hash = hash_password(nueva_password)
-        cur.execute("""
-            SELECT is_nullable FROM information_schema.columns
-            WHERE table_schema = current_schema() AND table_name = 'usuarios' AND column_name = 'password';
-        """)
-        legacy_password_info = cur.fetchone()
-        if not legacy_password_info:
-            cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (pwd_hash, user_id))
-        else:
+    if conn:
+        try:
+            cur = conn.cursor()
+            pwd_hash = hash_password(nueva_password)
             try:
-                cur.execute("UPDATE usuarios SET password_hash = %s, password = NULL WHERE id = %s;", (pwd_hash, user_id))
+                cur.execute("UPDATE usuarios SET password_hash = %s, password = %s WHERE id = %s;", (pwd_hash, nueva_password, user_id))
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
-                cur.execute("UPDATE usuarios SET password_hash = %s, password = %s WHERE id = %s;", (pwd_hash, nueva_password, user_id))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return True, "✅ Contraseña actualizada correctamente."
-    except Exception as e:
-        try:
-            conn.rollback()
+                cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (pwd_hash, user_id))
+            conn.commit()
+            cur.close()
             conn.close()
-        except Exception:
-            pass
-        return False, f"❌ Error al actualizar contraseña: {e}"
+            return True, "✅ Contraseña actualizada correctamente."
+        except Exception as e:
+            return False, f"❌ Error al actualizar contraseña: {e}"
+    return False, "❌ Error de conexión a BD."
 
 
 @st.cache_data(ttl=5)
@@ -509,22 +446,19 @@ else:
     # RESTRICCIÓN ESTRICTA: SÓLO EL USUARIO 'admin' TIENE PRIVILEGIOS DE ADMINISTRACIÓN GLOBAL
     es_admin_estricto = (username_actual == "admin")
 
-    st.sidebar.title("🏆 ESAM Analytics 360°")
+    st.sidebar.title("🏆 ESAM Analytics")
     st.sidebar.write(f"👤 **Analista:** {user_name}")
-    st.sidebar.caption("Control de ingresos · Básquetbol + Béisbol")
     
-    # Operadores ven únicamente sus módulos de trabajo. Solo admin ve gestión global,
-    # tarifas y restablecimiento de contraseñas.
     opciones_menu_list = [
         "📊 Panel General y Ganancias",
         "🏀 Módulo Básquetbol",
         "⚾ Módulo Béisbol",
+        "🔐 Seguridad y Contraseñas"
     ]
+    
+    # SÓLO EL ADMIN ESTRICTO VE EL MENÚ DE CONFIGURACIÓN DE PRECIOS
     if es_admin_estricto:
-        opciones_menu_list.extend([
-            "⚙️ Administración de Precios por Deporte",
-            "🔐 Seguridad y Contraseñas",
-        ])
+        opciones_menu_list.insert(3, "⚙️ Administración de Precios por Deporte")
 
     st.sidebar.markdown("---")
     opcion_menu = st.sidebar.radio("🧭 Menú Principal:", opciones_menu_list)
