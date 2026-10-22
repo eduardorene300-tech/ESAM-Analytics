@@ -96,6 +96,7 @@ def init_db():
                 );
             """)
 
+            # Migraciones automáticas seguras para tablas preexistentes
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS nombre VARCHAR(100) DEFAULT 'Operador';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
@@ -188,7 +189,7 @@ init_db()
 
 
 # =========================================================
-# 5. CONSULTAS OPTIMIZADAS CON CACHÉ
+# 5. CONSULTAS OPTIMIZADAS CON CACHÉ (RENDIMIENTO ALTO)
 # =========================================================
 @st.cache_data(ttl=10)
 def obtener_tasas_globales():
@@ -255,7 +256,7 @@ def obtener_tarifa_basket(tipo_partido, cant_partidos=0):
 
 
 # =========================================================
-# 6. GESTIÓN DE USUARIOS Y OPERACIONES
+# 6. GESTIÓN DE USUARIOS Y AUDITORÍA
 # =========================================================
 def registrar_usuario(username, nombre, password, rol="operador"):
     conn = get_db_connection()
@@ -376,14 +377,13 @@ if not st.session_state.authenticated:
     st.title("🏆 ESAM Analytics 360°")
     st.caption("Plataforma Profesional de Análisis y Control Operativo (Básquetbol & Béisbol)")
 
-    # PESTAÑAS PÚBLICAS LIMPIAS (SIN RESETEO ADMIN PÚBLICO)
-    tab_login, tab_registro = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario"])
+    tab_login, tab_registro, tab_reset = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario", "⚙️ Restablecer Clave Admin"])
 
     with tab_login:
         st.subheader("Ingreso de Operadores")
         with st.form("form_login"):
-            user_input = st.text_input("Usuario")
-            pass_input = st.text_input("Contraseña", type="password")
+            user_input = st.text_input("Usuario", value="admin")
+            pass_input = st.text_input("Contraseña", type="password", value="admin123")
             submit_login = st.form_submit_button("Entrar a ESAM Analytics", use_container_width=True)
 
             if submit_login:
@@ -420,9 +420,32 @@ if not st.session_state.authenticated:
                     if exito: st.success(msg)
                     else: st.error(msg)
 
+    with tab_reset:
+        st.subheader("Restablecer Contraseña de Admin de Emergencia")
+        st.info("Utiliza este botón para forzar el reinicio de la contraseña del usuario 'admin' a 'admin123' en la base de datos.")
+        if st.button("⚡ Forzar Reseteo de Admin a 'admin123'", use_container_width=True):
+            conn_r = get_db_connection()
+            if conn_r:
+                try:
+                    cur_r = conn_r.cursor()
+                    h_pass = hash_password("admin123")
+                    try:
+                        cur_r.execute("UPDATE usuarios SET password_hash = %s, password = 'admin123' WHERE username = 'admin';", (h_pass,))
+                    except Exception:
+                        conn_r.rollback()
+                        cur_r = conn_r.cursor()
+                        cur_r.execute("UPDATE usuarios SET password_hash = %s WHERE username = 'admin';", (h_pass,))
+                    conn_r.commit()
+                    cur_r.close()
+                    conn_r.close()
+                    st.cache_data.clear()
+                    st.success("✅ ¡Contraseña de 'admin' restablecida con éxito a 'admin123'! Ya puedes iniciar sesión.")
+                except Exception as e:
+                    st.error(f"Error al restablecer: {e}")
+
 else:
     # =========================================================
-    # PANEL PRINCIPAL Y NAVEGACIÓN
+    # PANEL PRINCIPAL Y NAVEGACIÓN PROFESIONAL
     # =========================================================
     user_id = st.session_state.user_info["id"]
     user_name = st.session_state.user_info["nombre"]
@@ -475,13 +498,12 @@ else:
         if target_user_id == 0:
             st.caption("Consolidado financiero global de TODOS los operadores en el sistema")
         else:
-            st.caption("Consolidado financiero de operaciones")
+            st.caption(f"Consolidado financiero de operaciones")
 
         conn_gen = get_db_connection()
         total_g_basket = 0.0
         total_g_beisbol = 0.0
         total_juegos_b = 0
-        total_lotes_beisbol = 0
         total_pich_b = 0
 
         if conn_gen:
@@ -499,7 +521,6 @@ else:
 
                 if not df_beis_all.empty:
                     total_pich_b = int(df_beis_all["cantidad"].sum())
-                    total_lotes_beisbol = len(df_beis_all)
                     precio_b_u = obtener_tasas_globales()["precio_beisbol"]
                     total_g_beisbol = total_pich_b * precio_b_u
 
@@ -508,21 +529,19 @@ else:
                 st.error(f"Error al calcular totales: {e}")
 
         total_ganancias_general = total_g_basket + total_g_beisbol
-        # CÁLCULO EXACTO DEL TOTAL DE REGISTROS (11 básquet + 4 béisbol = 15 registros)
-        total_registros_brutos = total_juegos_b + total_lotes_beisbol
 
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
         col_mg1.metric("💰 Ganancias Totales ($)", f"${total_ganancias_general:,.2f}")
         col_mg2.metric("🏀 Ingresos Básquetbol", f"${total_g_basket:,.2f}", f"{total_juegos_b} partidos")
         col_mg3.metric("⚾ Ingresos Béisbol", f"${total_g_beisbol:,.2f}", f"{total_pich_b:,} picheos")
-        col_mg4.metric("📊 Total Registros", f"{total_registros_brutos} cargas", f"{total_juegos_b} basket / {total_lotes_beisbol} béisbol")
+        col_mg4.metric("📊 Total Actividad", f"{total_juegos_b + total_pich_b} registros")
 
         st.markdown("---")
         st.subheader("💡 Resumen Operativo")
         st.info("Este panel consolida de forma automática el rendimiento económico de los análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (CON EDICIÓN Y ELIMINACIÓN)
+    # MÓDULO 1: BÁSQUETBOL
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -638,47 +657,6 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            # HERRAMIENTAS DE EDICIÓN Y ELIMINACIÓN DE BÁSQUETBOL
-            with st.expander("🛠️ Opciones de Edición / Eliminación de Partidos"):
-                tab_eb1, tab_eb2 = st.tabs(["✏️ Editar Partido", "🗑️ Eliminar Partido"])
-                
-                with tab_eb1:
-                    list_ids_b = df_basket["id"].tolist()
-                    id_edit_b = st.selectbox("Seleccione el ID del partido a editar:", list_ids_b, key="sel_edit_b")
-                    
-                    row_b = df_basket[df_basket["id"] == id_edit_b].iloc[0]
-                    with st.form("form_edit_b"):
-                        fe_b = st.date_input("Fecha", value=pd.to_datetime(row_b["fecha"]).date())
-                        cod_b = st.text_input("Código de Partido", value=str(row_b["codigo_partido"]))
-                        t_b = st.text_input("Tiempo de Ejecución", value=str(row_b["tiempo_ejecucion"]))
-                        tar_b = st.number_input("Tarifa ($)", value=float(row_b["tarifa"]), step=0.50)
-                        
-                        if st.form_submit_button("💾 Guardar Cambios en Partido"):
-                            conn_eb = get_db_connection()
-                            if conn_eb:
-                                cur_eb = conn_eb.cursor()
-                                cur_eb.execute("UPDATE partidos SET fecha=%s, codigo_partido=%s, tiempo_ejecucion=%s, tarifa=%s WHERE id=%s;", (fe_b, cod_b, t_b, tar_b, id_edit_b))
-                                conn_eb.commit()
-                                cur_eb.close()
-                                conn_eb.close()
-                                st.cache_data.clear()
-                                st.success("✅ Partido actualizado con éxito.")
-                                st.rerun()
-
-                with tab_eb2:
-                    id_del_b = st.selectbox("Seleccione el ID del partido a eliminar:", df_basket["id"].tolist(), key="sel_del_b")
-                    if st.button("🚨 Confirmar y Eliminar Partido", use_container_width=True):
-                        conn_db = get_db_connection()
-                        if conn_db:
-                            cur_db = conn_db.cursor()
-                            cur_db.execute("DELETE FROM partidos WHERE id = %s;", (id_del_b,))
-                            conn_db.commit()
-                            cur_db.close()
-                            conn_db.close()
-                            st.cache_data.clear()
-                            st.success("🗑️ Partido eliminado correctamente.")
-                            st.rerun()
-
             csv_b = df_basket.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Exportar Reporte de Básquetbol (CSV)",
@@ -690,7 +668,7 @@ else:
             st.info("No hay registros de básquetbol en el rango de fechas seleccionado.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (CON EDICIÓN Y ELIMINACIÓN)
+    # MÓDULO 2: BÉISBOL
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -783,49 +761,9 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-            # HERRAMIENTAS DE EDICIÓN Y ELIMINACIÓN DE BÉISBOL
-            with st.expander("🛠️ Opciones de Edición / Eliminación de Picheos"):
-                tab_ep1, tab_ep2 = st.tabs(["✏️ Editar Lote de Picheos", "🗑️ Eliminar Lote"])
-                
-                with tab_ep1:
-                    list_ids_p = df_picheos["id"].tolist()
-                    id_edit_p = st.selectbox("Seleccione el ID del lote a editar:", list_ids_p, key="sel_edit_p")
-                    
-                    row_p = df_picheos[df_picheos["id"] == id_edit_p].iloc[0]
-                    with st.form("form_edit_p"):
-                        fe_p = st.date_input("Fecha", value=pd.to_datetime(row_p["fecha"]).date())
-                        id_c_p = st.text_input("ID Control / Partido", value=str(row_p["id_control"]))
-                        cant_p = st.number_input("Cantidad de Picheos", value=int(row_p["cantidad"]), step=1, min_value=1)
-                        
-                        if st.form_submit_button("💾 Guardar Cambios en Picheos"):
-                            conn_ep = get_db_connection()
-                            if conn_ep:
-                                cur_ep = conn_ep.cursor()
-                                cur_ep.execute("UPDATE picheos SET fecha=%s, id_control=%s, cantidad=%s WHERE id=%s;", (fe_p, id_c_p, int(cant_p), id_edit_p))
-                                conn_ep.commit()
-                                cur_ep.close()
-                                conn_ep.close()
-                                st.cache_data.clear()
-                                st.success("✅ Lote de picheos actualizado con éxito.")
-                                st.rerun()
-
-                with tab_ep2:
-                    id_del_p = st.selectbox("Seleccione el ID del lote a eliminar:", df_picheos["id"].tolist(), key="sel_del_p")
-                    if st.button("🚨 Confirmar y Eliminar Lote", use_container_width=True):
-                        conn_dp = get_db_connection()
-                        if conn_dp:
-                            cur_dp = conn_dp.cursor()
-                            cur_dp.execute("DELETE FROM picheos WHERE id = %s;", (id_del_p,))
-                            conn_dp.commit()
-                            cur_dp.close()
-                            conn_dp.close()
-                            st.cache_data.clear()
-                            st.success("🗑️ Lote de picheos eliminado correctamente.")
-                            st.rerun()
-
             csv_b = df_picheos.to_csv(index=False).encode("utf-8")
             st.download_button(
-                "📥 Exportar Reporte de Béisbol (CSV)",
+                "📥 Exportar Reporte de Picheos (CSV)",
                 data=csv_b,
                 file_name=f"esam_beisbol_{b_fini}_al_{b_ffin}.csv",
                 mime="text/csv"
@@ -882,7 +820,7 @@ else:
                     st.rerun()
 
     # =========================================================
-    # MÓDULO: SEGURIDAD Y CREDENCIALES (PRIVADO)
+    # MÓDULO NUEVO: SEGURIDAD Y CREDENCIALES
     # =========================================================
     elif opcion_menu == "🔐 Seguridad y Contraseñas":
         st.title("🔐 Gestión de Seguridad y Contraseñas")
