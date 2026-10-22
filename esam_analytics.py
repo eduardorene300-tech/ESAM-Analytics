@@ -190,7 +190,7 @@ init_db()
 # =========================================================
 # 5. CONSULTAS OPTIMIZADAS CON CACHÉ
 # =========================================================
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=5)
 def obtener_tasas_globales():
     conn = get_db_connection()
     tasas = {
@@ -328,7 +328,7 @@ def cambiar_password_usuario(user_id, nueva_password):
     return False, "❌ Error de conexión a BD."
 
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=5)
 def obtener_todos_los_usuarios():
     conn = get_db_connection()
     if not conn: return pd.DataFrame()
@@ -376,7 +376,6 @@ if not st.session_state.authenticated:
     st.title("🏆 ESAM Analytics 360°")
     st.caption("Plataforma Profesional de Análisis y Control Operativo (Básquetbol & Béisbol)")
 
-    # PESTAÑAS PÚBLICAS LIMPIAS (SIN RESETEO ADMIN PÚBLICO)
     tab_login, tab_registro = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario"])
 
     with tab_login:
@@ -422,14 +421,15 @@ if not st.session_state.authenticated:
 
 else:
     # =========================================================
-    # PANEL PRINCIPAL Y NAVEGACIÓN
+    # PANEL PRINCIPAL Y NAVEGACIÓN PRIVADA
     # =========================================================
     user_id = st.session_state.user_info["id"]
     user_name = st.session_state.user_info["nombre"]
     username_actual = st.session_state.user_info["username"].lower().strip()
     rol_actual = st.session_state.user_info.get("rol", "operador")
 
-    es_admin_base = (username_actual == "admin") or (rol_actual == "admin")
+    # RESTRICCIÓN STRICTA DE ADMINISTRADOR (SÓLO USUARIO 'admin')
+    es_admin_estricto = (username_actual == "admin")
 
     st.sidebar.title("🏆 ESAM Analytics")
     st.sidebar.write(f"👤 **Analista:** {user_name}")
@@ -440,15 +440,21 @@ else:
         "⚾ Módulo Béisbol",
         "🔐 Seguridad y Contraseñas"
     ]
-    if es_admin_base:
+    
+    if es_admin_estricto:
         opciones_menu_list.insert(3, "⚙️ Administración de Precios por Deporte")
 
     st.sidebar.markdown("---")
     opcion_menu = st.sidebar.radio("🧭 Menú Principal:", opciones_menu_list)
 
     st.sidebar.markdown("---")
-    modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=es_admin_base)
-    es_admin = es_admin_base or modo_super_admin
+    
+    # MOSTRAR EL BOTÓN MODO ADMIN SOLO AL USUARIO 'admin'
+    if es_admin_estricto:
+        modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=True)
+        es_admin = modo_super_admin
+    else:
+        es_admin = False
 
     if st.sidebar.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.authenticated = False
@@ -475,7 +481,7 @@ else:
         if target_user_id == 0:
             st.caption("Consolidado financiero global de TODOS los operadores en el sistema")
         else:
-            st.caption("Consolidado financiero de operaciones")
+            st.caption(f"Consolidado financiero de operaciones — {user_name}")
 
         conn_gen = get_db_connection()
         total_g_basket = 0.0
@@ -508,7 +514,6 @@ else:
                 st.error(f"Error al calcular totales: {e}")
 
         total_ganancias_general = total_g_basket + total_g_beisbol
-        # CÁLCULO EXACTO DEL TOTAL DE REGISTROS (11 básquet + 4 béisbol = 15 registros)
         total_registros_brutos = total_juegos_b + total_lotes_beisbol
 
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
@@ -522,7 +527,7 @@ else:
         st.info("Este panel consolida de forma automática el rendimiento económico de los análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (CON EDICIÓN Y ELIMINACIÓN)
+    # MÓDULO 1: BÁSQUETBOL
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -542,11 +547,11 @@ else:
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtros de Búsqueda")
-        filtro_b_tipo = st.sidebar.selectbox("Filtrar por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Hoy", "Este Mes", "Todos"], key="b_filtro_sel")
+        filtro_b_tipo = st.sidebar.selectbox("Filtrar por:", ["Todos", "Esta Quincena", "Hoy", "Este Mes", "Rango de Fechas Personalizado"], key="b_filtro_sel")
 
         if filtro_b_tipo == "Rango de Fechas Personalizado":
             col_fd1, col_fd2 = st.sidebar.columns(2)
-            with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=15), key="b_f_ini")
+            with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="b_f_ini")
             with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="b_f_fin")
         elif filtro_b_tipo == "Hoy":
             f_ini = f_fin = date.today()
@@ -638,7 +643,6 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            # HERRAMIENTAS DE EDICIÓN Y ELIMINACIÓN DE BÁSQUETBOL
             with st.expander("🛠️ Opciones de Edición / Eliminación de Partidos"):
                 tab_eb1, tab_eb2 = st.tabs(["✏️ Editar Partido", "🗑️ Eliminar Partido"])
                 
@@ -687,10 +691,10 @@ else:
                 mime="text/csv"
             )
         else:
-            st.info("No hay registros de básquetbol en el rango de fechas seleccionado.")
+            st.info("No hay registros de básquetbol en el rango de fechas seleccionado. Cambie el filtro en el menú lateral a 'Todos' si no ve los registros.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (CON EDICIÓN Y ELIMINACIÓN)
+    # MÓDULO 2: BÉISBOL
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -710,11 +714,11 @@ else:
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtros de Búsqueda")
-        f_tipo_beis = st.sidebar.selectbox("Filtrar Béisbol por:", ["Rango de Fechas Personalizado", "Esta Quincena", "Este Mes", "Todos"], key="b_beis_filtro")
+        f_tipo_beis = st.sidebar.selectbox("Filtrar Béisbol por:", ["Todos", "Esta Quincena", "Este Mes", "Rango de Fechas Personalizado"], key="b_beis_filtro")
 
         if f_tipo_beis == "Rango de Fechas Personalizado":
             col_fb1, col_fb2 = st.sidebar.columns(2)
-            with col_fb1: b_fini = st.date_input("Desde", value=date.today() - timedelta(days=15), key="beis_ini")
+            with col_fb1: b_fini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="beis_ini")
             with col_fb2: b_ffin = st.date_input("Hasta", value=date.today(), key="beis_fin")
         elif f_tipo_beis == "Esta Quincena":
             b_fini, b_ffin = obtener_rango_quincena(date.today())
@@ -783,7 +787,6 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-            # HERRAMIENTAS DE EDICIÓN Y ELIMINACIÓN DE BÉISBOL
             with st.expander("🛠️ Opciones de Edición / Eliminación de Picheos"):
                 tab_ep1, tab_ep2 = st.tabs(["✏️ Editar Lote de Picheos", "🗑️ Eliminar Lote"])
                 
@@ -834,9 +837,9 @@ else:
             st.info("No hay registros de picheos en el rango de fechas seleccionado.")
 
     # =========================================================
-    # MÓDULO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (SOLO ADMIN)
+    # MÓDULO: ADMINISTRACIÓN DE PRECIOS POR DEPORTE (EXCLUSIVO ADMIN)
     # =========================================================
-    elif opcion_menu == "⚙️ Administración de Precios por Deporte":
+    elif opcion_menu == "⚙️ Administración de Precios por Deporte" and es_admin_estricto:
         st.title("⚙️ PANEL DE CONTROL Y CONFIGURACIÓN DE TARIFAS")
         st.caption("Ajusta en tiempo real los valores en USD asignados a cada disciplina deportiva")
 
@@ -882,7 +885,7 @@ else:
                     st.rerun()
 
     # =========================================================
-    # MÓDULO: SEGURIDAD Y CREDENCIALES (PRIVADO)
+    # MÓDULO: SEGURIDAD Y CREDENCIALES
     # =========================================================
     elif opcion_menu == "🔐 Seguridad y Contraseñas":
         st.title("🔐 Gestión de Seguridad y Contraseñas")
