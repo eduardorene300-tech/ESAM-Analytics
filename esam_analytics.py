@@ -457,7 +457,7 @@ else:
     username_actual = st.session_state.user_info["username"].lower().strip()
     rol_actual = st.session_state.user_info.get("rol", "operador")
 
-    # RESTRICCIÓN ESTRICTA DE ADMINISTRADOR (SÓLO 'admin')
+    # RESTRICCIÓN ESTRICTA: SÓLO EL USUARIO 'admin' TIENE PRIVILEGIOS DE ADMINISTRACIÓN GLOBAL
     es_admin_estricto = (username_actual == "admin")
 
     st.sidebar.title("🏆 ESAM Analytics")
@@ -470,6 +470,7 @@ else:
         "🔐 Seguridad y Contraseñas"
     ]
     
+    # SÓLO EL ADMIN ESTRICTO VE EL MENÚ DE CONFIGURACIÓN DE PRECIOS
     if es_admin_estricto:
         opciones_menu_list.insert(3, "⚙️ Administración de Precios por Deporte")
 
@@ -478,7 +479,7 @@ else:
 
     st.sidebar.markdown("---")
     
-    # EL MODO ADMIN GLOBAL SOLO APARECE PARA EL USUARIO ADMIN ESTRICTO
+    # EL CHECKBOX DE MODO ADMIN GLOBAL SOLO APARECE PARA EL USUARIO ADMIN ESTRICTO
     if es_admin_estricto:
         modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=True)
         es_admin = modo_super_admin
@@ -491,7 +492,7 @@ else:
         st.rerun()
 
     # =========================================================
-    # MÓDULO: PANEL GENERAL Y GANANCIAS TOTALES
+    # MÓDULO: PANEL GENERAL Y GANANCIAS TOTALES (CONSOLIDADO 2 DEPORTES)
     # =========================================================
     if opcion_menu == "📊 Panel General y Ganancias":
         st.title("📊 Panel General y Ganancias Totales")
@@ -499,6 +500,7 @@ else:
         target_user_id = user_id
         opcion_label = f"👤 mis datos ({user_name})"
 
+        # SÓLO EL ADMIN PUEDE VER EL SELECTOR GLOBAL DE USUARIOS
         if es_admin:
             df_usrs = obtener_todos_los_usuarios()
             if not df_usrs.empty:
@@ -509,6 +511,9 @@ else:
                 u_seleccionado = st.selectbox("👑 [ADMIN] Inspeccionar Datos de Usuario Individual / Global:", list(opciones_u.keys()))
                 target_user_id = opciones_u[u_seleccionado]
                 opcion_label = u_seleccionado
+        else:
+            # Los operadores estándar solo ven sus datos personales sin opciones globales
+            target_user_id = user_id
 
         if target_user_id == 0:
             st.caption("Consolidado financiero global de TODOS los operadores en el sistema")
@@ -548,6 +553,7 @@ else:
         total_ganancias_general = total_g_basket + total_g_beisbol
         total_registros_brutos = total_juegos_b + total_lotes_beisbol
 
+        # SECCIÓN 1: MÉTRICAS DE GANANCIAS EN LOS DOS DEPORTES
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
         col_mg1.metric("💰 Ganancias Totales ($)", f"${total_ganancias_general:,.2f}")
         col_mg2.metric("🏀 Ingresos Básquetbol", f"${total_g_basket:,.2f}", f"{total_juegos_b} partidos")
@@ -555,11 +561,19 @@ else:
         col_mg4.metric("📊 Total Registros", f"{total_registros_brutos} cargas", f"{total_juegos_b} basket / {total_lotes_beisbol} béisbol")
 
         st.markdown("---")
-        st.subheader("💡 Resumen Operativo de Ambos Deportes")
-        st.info("Este panel consolida en tiempo real las ganancias de Básquetbol y Béisbol sumando los ingresos independientes de cada disciplina.")
+        st.subheader("💡 Consolidado Financiero por Disciplina")
+        
+        # TABLA O RESUMEN DETALLADO DE AMBOS DEPORTES
+        df_resumen_deportes = pd.DataFrame({
+            "Disciplina": ["🏀 Básquetbol", "⚾ Béisbol", "🏆 Total General"],
+            "Volumen de Trabajo": [f"{total_juegos_b} partidos", f"{total_pich_b:,} picheos", f"{total_registros_brutos} operaciones"],
+            "Ganancia Acumulada (USD)": [f"${total_g_basket:,.2f}", f"${total_g_beisbol:,.2f}", f"${total_ganancias_general:,.2f}"]
+        })
+        st.dataframe(df_resumen_deportes, use_container_width=True, hide_index=True)
+        st.info("Este panel unifica de forma transparente el rendimiento económico obtenido en los dos deportes analizados en la plataforma.")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (CON FILTROS QUINCENALES Q1/Q2 Y CRUD)
+    # MÓDULO 1: BÁSQUETBOL (QUINCENAS SEPARADAS Q1/Q2 Y CRUD)
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -703,7 +717,8 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            with st.expander("🛠️ Modificar o Eliminar Registros de Básquetbol"):
+            # BOTONES DE MODIFICAR Y ELIMINAR CARGA (CRUD)
+            with st.expander("🛠️ Modificar o Eliminar Cargas de Básquetbol"):
                 tab_eb1, tab_eb2 = st.tabs(["✏️ Modificar Partido", "🗑️ Eliminar Partido"])
                 
                 with tab_eb1:
@@ -754,7 +769,7 @@ else:
             st.info("No hay registros de básquetbol para la quincena o periodo seleccionado.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (CON FILTROS QUINCENALES Q1/Q2 Y CRUD)
+    # MÓDULO 2: BÉISBOL (QUINCENAS SEPARADAS Q1/Q2 Y CRUD)
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -877,6 +892,7 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
+            # BOTONES DE MODIFICAR Y ELIMINAR LOTE (CRUD)
             with st.expander("🛠️ Modificar o Eliminar Lotes de Picheos"):
                 tab_ep1, tab_ep2 = st.tabs(["✏️ Modificar Lote", "🗑️ Eliminar Lote"])
                 
@@ -979,7 +995,7 @@ else:
     # =========================================================
     elif opcion_menu == "🔐 Seguridad y Contraseñas":
         st.title("🔐 Gestión de Seguridad y Contraseñas")
-        st.caption(f"Actualiza la contraseña de tu cuenta de operador — {user_name}")
+        st.caption(f"Actualiza la contraseña de tu cuenta — {user_name}")
 
         with st.form("form_cambiar_pass"):
             pass_vieja = st.text_input("Contraseña Actual", type="password")
@@ -992,7 +1008,7 @@ else:
                 if not (pass_vieja and pass_nueva and pass_conf):
                     st.warning("Por favor complete todos los campos.")
                 elif pass_nueva != pass_conf:
-                    st.error("Las nuevas contraseñas no cienciden.")
+                    st.error("Las nuevas contraseñas no coinciden.")
                 elif len(pass_nueva) < 6:
                     st.error("La nueva contraseña debe tener al menos 6 caracteres.")
                 else:
