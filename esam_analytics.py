@@ -552,7 +552,7 @@ else:
         total_ganancias_general = total_g_basket + total_g_beisbol
         total_registros_brutos = total_juegos_b + total_lotes_beisbol
 
-        # MÉTRICAS UNIFICADAS EN LOS DOS DEPORTES
+        # PANTALLA PRINCIPAL: MÉTRICAS UNIFICADAS DE AMBOS DEPORTES
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
         col_mg1.metric("💰 Ganancias Totales ($)", f"${total_ganancias_general:,.2f}")
         col_mg2.metric("🏀 Ingresos Básquetbol", f"${total_g_basket:,.2f}", f"{total_juegos_b} partidos")
@@ -568,7 +568,7 @@ else:
             "Ganancia Acumulada (USD)": [f"${total_g_basket:,.2f}", f"${total_g_beisbol:,.2f}", f"${total_ganancias_general:,.2f}"]
         })
         st.dataframe(df_resumen_deportes, use_container_width=True, hide_index=True)
-        st.info("Este panel consolida en tiempo real las ganancias de Básquetbol y Béisbol sumando los ingresos independientes de cada disciplina.")
+        st.info("Este panel unifica en tiempo real el rendimiento financiero obtenido en los dos deportes analizados.")
 
     # =========================================================
     # MÓDULO 1: BÁSQUETBOL (QUINCENAS SEPARADAS Y CRUD)
@@ -597,7 +597,7 @@ else:
             "Seleccionar Quincena / Periodo:",
             [
                 "1.ª Quincena del Mes (Días 1 al 15)",
-                "2.ª Quincena del Mes (Días 16 al fin)",
+                "2.ª Quincena del Mes (Días 16 al final)",
                 "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
@@ -609,7 +609,7 @@ else:
 
         if filtro_b_tipo == "1.ª Quincena del Mes (Días 1 al 15)":
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif filtro_b_tipo == "2.ª Quincena del Mes (Días 16 al fin)":
+        elif filtro_b_tipo == "2.ª Quincena del Mes (Días 16 al final)":
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
         elif filtro_b_tipo == "Quincena Actual":
             f_ini, f_fin = obtener_rango_quincena(hoy)
@@ -715,7 +715,7 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            # CRUD: MODIFICAR O ELIMINAR CARGA
+            # CRUD: BOTONES PARA MODIFICAR O ELIMINAR CARGAS
             with st.expander("🛠️ Modificar o Eliminar Cargas de Básquetbol"):
                 tab_eb1, tab_eb2 = st.tabs(["✏️ Modificar Partido", "🗑️ Eliminar Partido"])
                 
@@ -793,7 +793,7 @@ else:
             "Seleccionar Quincena / Periodo Béisbol:",
             [
                 "1.ª Quincena del Mes (Días 1 al 15)",
-                "2.ª Quincena del Mes (Días 16 al fin)",
+                "2.ª Quincena del Mes (Días 16 al final)",
                 "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
@@ -805,7 +805,7 @@ else:
 
         if f_tipo_beis == "1.ª Quincena del Mes (Días 1 al 15)":
             b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
-        elif f_tipo_beis == "2.ª Quincena del Mes (Días 16 al fin)":
+        elif f_tipo_beis == "2.ª Quincena del Mes (Días 16 al final)":
             b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=2)
         elif f_tipo_beis == "Quincena Actual":
             b_fini, b_ffin = obtener_rango_quincena(hoy_b)
@@ -890,7 +890,7 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-            # CRUD: MODIFICAR O ELIMINAR LOTE
+            # CRUD: BOTONES PARA MODIFICAR O ELIMINAR LOTES
             with st.expander("🛠️ Modificar o Eliminar Lotes de Picheos"):
                 tab_ep1, tab_ep2 = st.tabs(["✏️ Modificar Lote", "🗑️ Eliminar Lote"])
                 
