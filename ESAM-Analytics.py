@@ -4,6 +4,7 @@ import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import streamlit as st
+import plotly.express as px
 
 # =========================================================
 # 1. CONFIGURACIÓN GENERAL DE LA PÁGINA Y ESTILOS VISUALES
@@ -17,7 +18,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Barlow:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Barlow:wght@300;400;500;600&display=swap');
 *, *::before, *::after { box-sizing: border-box; }
 html, body, [data-testid="stAppViewContainer"] {
     background: #030810 !important; color: #E8EFF8 !important;
@@ -43,12 +44,12 @@ html, body, [data-testid="stAppViewContainer"] {
     border-radius: 7px !important; border: none !important; }
 .stTabs [aria-selected="true"] { background: #00AAFF !important; color: white !important; }
 [data-testid="stMetric"] { background: #0A1628 !important; border: 1px solid #0D2040 !important;
-    border-radius: 14px !important; padding: 1.2rem 1.5rem !important; }
+    border-radius: 14px !important; padding: 1rem !important; }
 [data-testid="stMetricLabel"] { font-family: 'Rajdhani', sans-serif !important;
-    font-size: 0.78rem !important; letter-spacing: 0.12em !important;
-    color: #7A90A8 !important; font-weight: 600 !important; }
+    font-size: 0.85rem !important; letter-spacing: 0.05em !important;
+    color: #7A90A8 !important; font-weight: 600 !important; white-space: nowrap !important; }
 [data-testid="stMetricValue"] { font-family: 'Rajdhani', sans-serif !important;
-    font-size: 2.4rem !important; font-weight: 700 !important; color: #00AAFF !important; }
+    font-size: 2.1rem !important; font-weight: 700 !important; color: #00AAFF !important; }
 #MainMenu, footer, [data-testid="stDecoration"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -457,7 +458,6 @@ else:
 
     es_admin_estricto = (username_actual == "admin")
 
-    # PANEL LATERAL CON ESTADÍSTICAS Y MENÚ
     st.sidebar.markdown("""
         <div style='text-align: center; padding: 10px 0;'>
             <h2 style='color: #00AAFF; margin-bottom: 0; font-family: "Rajdhani", sans-serif;'>💻 ESAM ANALYTICS</h2>
@@ -494,13 +494,13 @@ else:
         st.rerun()
 
     # =========================================================
-    # MÓDULO: PANTALLA PRINCIPAL / PANEL GENERAL Y ESTADÍSTICAS CON FLECHAS Y CONOS
+    # MÓDULO: PANTALLA PRINCIPAL CON GRÁFICOS Y MÉTRICAS SIN NÚMEROS DUPLICADOS
     # =========================================================
     if opcion_menu == "📊 Panel General y Estadísticas":
-        st.title("📊 Panel General y Estadísticas Operativas")
+        st.title("📊 Panel General y Análisis Estadístico 360°")
         
         target_user_id = user_id
-        opcion_label = f"👤 mis datos ({user_name})"
+        opcion_label = f"mis datos ({user_name})"
 
         if es_admin:
             df_usrs = obtener_todos_los_usuarios()
@@ -509,16 +509,13 @@ else:
                 for _, r_u in df_usrs.iterrows():
                     opciones_u[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
                 
-                u_seleccionado = st.selectbox("👑 [ADMIN] Inspeccionar Estadísticas de Usuario Individual / Global:", list(opciones_u.keys()))
+                u_seleccionado = st.selectbox("👑 [ADMIN] Seleccionar Analista para Inspección:", list(opciones_u.keys()))
                 target_user_id = opciones_u[u_seleccionado]
                 opcion_label = u_seleccionado
         else:
             target_user_id = user_id
 
-        if target_user_id == 0:
-            st.caption("Consolidado de estadísticas globales de TODOS los operadores en el sistema")
-        else:
-            st.caption(f"Mostrando estadísticas individuales de: **{opcion_label}**")
+        st.caption(f"Mostrando análisis operativo de: **{opcion_label}**")
 
         conn_gen = get_db_connection()
         total_g_basket = 0.0
@@ -553,25 +550,49 @@ else:
         total_ganancias_general = total_g_basket + total_g_beisbol
         total_registros_brutos = total_juegos_b + total_lotes_beisbol
 
+        promedio_basket = (total_g_basket / total_juegos_b) if total_juegos_b > 0 else 0.00
+        tasas_cur = obtener_tasas_globales()
+
+        # TARJETAS DE MÁXIMO NIVEL (SIN TEXTO RECORTADO)
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
-        col_mg1.metric("💰 Ganancias Totales ($)", f"${total_ganancias_general:,.2f}", "📈 Tendencia Alza")
-        col_mg2.metric("🏀 Ingresos Básquetbol", f"${total_g_basket:,.2f}", f"🔺 {total_juegos_b} partidos")
-        col_mg3.metric("⚾ Ingresos Béisbol", f"${total_g_beisbol:,.2f}", f"🔺 {total_pich_b:,} picheos")
-        col_mg4.metric("📊 Cono de Volumen", f"{total_registros_brutos} ops", "🟢 Nivel Óptimo")
+        col_mg1.metric("💰 Total Acumulado", f"${total_ganancias_general:,.2f}", "📈 Rendimiento Alza")
+        col_mg2.metric("🏀 Básquetbol Total", f"${total_g_basket:,.2f}", f"🔺 {total_juegos_b} partidos")
+        col_mg3.metric("⚾ Béisbol Total", f"${total_g_beisbol:,.2f}", f"🔺 {total_pich_b:,} picheos")
+        col_mg4.metric("📊 Cargas Totales", f"{total_registros_brutos} ops", "🟢 Sistema Óptimo")
 
         st.markdown("---")
-        st.subheader("🔺 Indicadores y Consolidado por Disciplina")
         
-        df_resumen_deportes = pd.DataFrame({
-            "Disciplina": ["🏀 Básquetbol", "⚾ Béisbol", "💻 Total General"],
-            "Volumen / Cono Estadístico": [f"🔺 {total_juegos_b} partidos", f"🔺 {total_pich_b:,} picheos", f"🟢 {total_registros_brutos} operaciones"],
-            "Ganancia Acumulada (USD)": [f"${total_g_basket:,.2f}", f"${total_g_beisbol:,.2f}", f"${total_ganancias_general:,.2f}"]
-        })
-        st.dataframe(df_resumen_deportes, use_container_width=True, hide_index=True)
+        # VISUALIZACIÓN GRÁFICA REAL (DISTRIBUCIÓN DE INGRESOS POR DEPORTE)
+        col_g1, col_g2 = st.columns([1, 1])
+
+        with col_g1:
+            st.subheader("📊 Distribución de Ingresos por Deporte")
+            if total_ganancias_general > 0:
+                data_pie = pd.DataFrame({
+                    'Deporte': ['Básquetbol', 'Béisbol'],
+                    'Ingresos': [total_g_basket, total_g_beisbol]
+                })
+                fig_pie = px.pie(data_pie, values='Ingresos', names='Deporte', 
+                                 color_discrete_sequence=['#00AAFF', '#00FFCC'],
+                                 hole=0.4)
+                fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#E8EFF8')
+                st.plotly_chart(fig_pie, use_container_width=True)
+            else:
+                st.info("Registra datos en Básquetbol o Béisbol para generar gráficos estadísticos.")
+
+        with col_g2:
+            st.subheader("📈 Análisis y Desglose Operativo")
+            df_desglose = pd.DataFrame({
+                "Disciplina": ["🏀 Básquetbol", "⚾ Béisbol"],
+                "Unidades Registradas": [f"{total_juegos_b} partidos", f"{total_pich_b:,} picheos"],
+                "Promedio por Carga": [f"${promedio_basket:.2f} / partido", f"${tasas_cur['precio_beisbol']:.3f} / picheo"],
+                "Total USD": [f"${total_g_basket:,.2f}", f"${total_g_beisbol:,.2f}"]
+            })
+            st.dataframe(df_desglose, use_container_width=True, hide_index=True)
 
         if es_admin and target_user_id == 0:
             st.markdown("---")
-            st.subheader("👥 Auditoría y Estadísticas Detalladas por Operador")
+            st.subheader("👥 Auditoría General de Operadores en Sistema")
             conn_det = get_db_connection()
             if conn_det:
                 try:
