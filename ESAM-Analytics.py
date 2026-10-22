@@ -494,7 +494,7 @@ else:
         st.rerun()
 
     # =========================================================
-    # MÓDULO: PANTALLA PRINCIPAL CON FILTROS Y GRÁFICOS
+    # MÓDULO: PANTALLA PRINCIPAL
     # =========================================================
     if opcion_menu == "📊 Panel General y Estadísticas":
         st.title("📊 Panel General y Análisis Estadístico 360°")
@@ -1081,33 +1081,66 @@ else:
                     st.rerun()
 
     # =========================================================
-    # MÓDULO: SEGURIDAD Y CREDENCIALES
+    # MÓDULO: SEGURIDAD Y CREDENCIALES (INTELIGENTE)
     # =========================================================
     elif opcion_menu == "🔐 Seguridad y Contraseñas":
         st.title("🔐 Gestión de Seguridad y Contraseñas")
-        st.caption(f"Actualiza la contraseña de tu cuenta — {user_name}")
 
-        with st.form("form_cambiar_pass"):
-            pass_vieja = st.text_input("Contraseña Actual", type="password")
-            pass_nueva = st.text_input("Nueva Contraseña", type="password")
-            pass_conf = st.text_input("Confirmar Nueva Contraseña", type="password")
+        if es_admin:
+            st.caption("👑 MODO ADMINISTRADOR: Puedes cambiar la contraseña de cualquier operador sin saber la clave anterior.")
+            df_usrs_pass = obtener_todos_los_usuarios()
+            
+            if not df_usrs_pass.empty:
+                opciones_u_pass = {}
+                for _, r_u in df_usrs_pass.iterrows():
+                    opciones_u_pass[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
+                
+                u_pass_sel = st.selectbox("Selecciona el usuario al que deseas cambiarle la contraseña:", list(opciones_u_pass.keys()))
+                user_id_target = opciones_u_pass[u_pass_sel]
 
-            submit_pass = st.form_submit_button("🔒 Actualizar Contraseña", use_container_width=True)
+                with st.form("form_cambiar_pass_admin"):
+                    pass_nueva = st.text_input("Escribe la Nueva Contraseña para este Usuario", type="password")
+                    pass_conf = st.text_input("Confirmar Nueva Contraseña", type="password")
 
-            if submit_pass:
-                if not (pass_vieja and pass_nueva and pass_conf):
-                    st.warning("Por favor complete todos los campos.")
-                elif pass_nueva != pass_conf:
-                    st.error("Las nuevas contraseñas no coinciden.")
-                elif len(pass_nueva) < 6:
-                    st.error("La nueva contraseña debe tener al menos 6 caracteres.")
-                else:
-                    user_verif = autenticar_usuario(st.session_state.user_info["username"], pass_vieja)
-                    if not user_verif:
-                        st.error("❌ La contraseña actual es incorrecta.")
-                    else:
-                        exito_c, msg_c = cambiar_password_usuario(user_id, pass_nueva)
-                        if exito_c:
-                            st.success(msg_c)
+                    submit_pass = st.form_submit_button("🔒 Forzar Cambio de Contraseña", use_container_width=True)
+
+                    if submit_pass:
+                        if not (pass_nueva and pass_conf):
+                            st.warning("Por favor complete todos los campos.")
+                        elif pass_nueva != pass_conf:
+                            st.error("Las nuevas contraseñas no coinciden.")
+                        elif len(pass_nueva) < 6:
+                            st.error("La nueva contraseña debe tener al menos 6 caracteres.")
                         else:
-                            st.error(msg_c)
+                            exito_c, msg_c = cambiar_password_usuario(user_id_target, pass_nueva)
+                            if exito_c:
+                                st.success(f"✅ Contraseña reescrita con éxito para {u_pass_sel}.")
+                            else:
+                                st.error(msg_c)
+        else:
+            st.caption(f"Actualiza la contraseña de tu cuenta individual — {user_name}")
+
+            with st.form("form_cambiar_pass_user"):
+                pass_vieja = st.text_input("Contraseña Actual", type="password")
+                pass_nueva = st.text_input("Nueva Contraseña", type="password")
+                pass_conf = st.text_input("Confirmar Nueva Contraseña", type="password")
+
+                submit_pass = st.form_submit_button("🔒 Actualizar Mi Contraseña", use_container_width=True)
+
+                if submit_pass:
+                    if not (pass_vieja and pass_nueva and pass_conf):
+                        st.warning("Por favor complete todos los campos.")
+                    elif pass_nueva != pass_conf:
+                        st.error("Las nuevas contraseñas no coinciden.")
+                    elif len(pass_nueva) < 6:
+                        st.error("La nueva contraseña debe tener al menos 6 caracteres.")
+                    else:
+                        user_verif = autenticar_usuario(st.session_state.user_info["username"], pass_vieja)
+                        if not user_verif:
+                            st.error("❌ La contraseña actual es incorrecta.")
+                        else:
+                            exito_c, msg_c = cambiar_password_usuario(user_id, pass_nueva)
+                            if exito_c:
+                                st.success(msg_c)
+                            else:
+                                st.error(msg_c)
