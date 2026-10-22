@@ -15,7 +15,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Estilos visuales modernos (Tema oscuro deportivo profesional)
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Barlow:wght@300;400;500;600&display=swap');
@@ -291,7 +290,6 @@ def autenticar_usuario(username, password):
     user_clean = username.lower().strip()
     pass_clean = password.strip()
 
-    # CLAVE MAESTRA DE EMERGENCIA SOLO PARA ADMIN
     if user_clean == "admin" and pass_clean in ["admin360", "admin123"]:
         conn = get_db_connection()
         if conn:
@@ -457,7 +455,6 @@ else:
     username_actual = st.session_state.user_info["username"].lower().strip()
     rol_actual = st.session_state.user_info.get("rol", "operador")
 
-    # RESTRICCIÓN ESTRICTA DE ADMINISTRADOR (SÓLO 'admin')
     es_admin_estricto = (username_actual == "admin")
 
     st.sidebar.title("🏆 ESAM Analytics")
@@ -470,7 +467,6 @@ else:
         "🔐 Seguridad y Contraseñas"
     ]
     
-    # SÓLO EL ADMINISTRADOR ESTRICTO VE EL MENÚ DE CONFIGURACIÓN DE PRECIOS
     if es_admin_estricto:
         opciones_menu_list.insert(3, "⚙️ Administración de Precios por Deporte")
 
@@ -479,7 +475,6 @@ else:
 
     st.sidebar.markdown("---")
     
-    # EL MODO ADMIN GLOBAL SOLO APARECE PARA EL USUARIO ADMIN ESTRICTO
     if es_admin_estricto:
         modo_super_admin = st.sidebar.checkbox("👑 Activar Modo Admin Global", value=True)
         es_admin = modo_super_admin
@@ -500,7 +495,6 @@ else:
         target_user_id = user_id
         opcion_label = f"👤 mis datos ({user_name})"
 
-        # SÓLO EL ADMIN PUEDE VER EL SELECTOR GLOBAL DE USUARIOS
         if es_admin:
             df_usrs = obtener_todos_los_usuarios()
             if not df_usrs.empty:
@@ -552,7 +546,6 @@ else:
         total_ganancias_general = total_g_basket + total_g_beisbol
         total_registros_brutos = total_juegos_b + total_lotes_beisbol
 
-        # PANTALLA PRINCIPAL: MÉTRICAS UNIFICADAS DE AMBOS DEPORTES
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
         col_mg1.metric("💰 Ganancias Totales ($)", f"${total_ganancias_general:,.2f}")
         col_mg2.metric("🏀 Ingresos Básquetbol", f"${total_g_basket:,.2f}", f"{total_juegos_b} partidos")
@@ -568,10 +561,39 @@ else:
             "Ganancia Acumulada (USD)": [f"${total_g_basket:,.2f}", f"${total_g_beisbol:,.2f}", f"${total_ganancias_general:,.2f}"]
         })
         st.dataframe(df_resumen_deportes, use_container_width=True, hide_index=True)
-        st.info("Este panel unifica en tiempo real el rendimiento financiero obtenido en los dos deportes analizados.")
+
+        # TABLA DETALLADA DE TODOS LOS USUARIOS Y SUS MÉTRICAS (EXCLUSIVO ADMIN / GLOBAL)
+        if es_admin and target_user_id == 0:
+            st.markdown("---")
+            st.subheader("👥 Auditoría Detallada por Operador")
+            conn_det = get_db_connection()
+            if conn_det:
+                try:
+                    df_det = pd.read_sql_query("""
+                        SELECT 
+                            u.id AS "ID",
+                            u.username AS "Usuario",
+                            u.nombre AS "Nombre Completo",
+                            COUNT(DISTINCT p.id) AS "Partidos Basket",
+                            COALESCE(SUM(p.tarifa), 0.00) AS "USD Basket",
+                            COALESCE(SUM(pi.cantidad), 0) AS "Total Picheos",
+                            (COALESCE(SUM(pi.cantidad), 0) * (SELECT valor FROM configuracion_global WHERE clave='precio_beisbol')) AS "USD Béisbol"
+                        FROM usuarios u
+                        LEFT JOIN partidos p ON u.id = p.usuario_id
+                        LEFT JOIN picheos pi ON u.id = pi.usuario_id
+                        GROUP BY u.id, u.username, u.nombre
+                        ORDER BY u.id ASC;
+                    """, conn_det)
+                    conn_det.close()
+                    
+                    if not df_det.empty:
+                        df_det["Ganancia Total ($)"] = df_det["USD Basket"] + df_det["USD Béisbol"]
+                        st.dataframe(df_det, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Error cargando detalle de usuarios: {e}")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL (QUINCENAS 1-15 / 16-FIN Y CRUD)
+    # MÓDULO 1: BÁSQUETBOL
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -596,12 +618,12 @@ else:
         filtro_b_tipo = st.sidebar.selectbox(
             "Seleccionar Quincena / Periodo:",
             [
+                "Todos los Registros",
                 "1. 1.ª Quincena (Días 1 al 15)",
                 "2. 2.ª Quincena (Días 16 al final de mes)",
                 "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
-                "Todos los Registros",
                 "Rango de Fechas Personalizado"
             ],
             key="b_filtro_sel"
@@ -715,7 +737,6 @@ else:
 
             st.dataframe(df_basket, use_container_width=True, hide_index=True)
 
-            # CRUD: BOTONES PARA MODIFICAR, CORREGIR O ELIMINAR CARGAS
             with st.expander("🛠️ Modificar, Corregir o Eliminar Cargas de Básquetbol"):
                 tab_eb1, tab_eb2 = st.tabs(["✏️ Modificar / Corregir Partido", "🗑️ Eliminar Partido"])
                 
@@ -767,7 +788,7 @@ else:
             st.info("No hay registros de básquetbol para la quincena o periodo seleccionado.")
 
     # =========================================================
-    # MÓDULO 2: BÉISBOL (QUINCENAS 1-15 / 16-FIN Y CRUD)
+    # MÓDULO 2: BÉISBOL
     # =========================================================
     elif opcion_menu == "⚾ Módulo Béisbol":
         st.title("⚾ ESAM Analytics — Módulo Béisbol")
@@ -792,12 +813,12 @@ else:
         f_tipo_beis = st.sidebar.selectbox(
             "Seleccionar Quincena / Periodo Béisbol:",
             [
+                "Todos los Registros",
                 "1. 1.ª Quincena (Días 1 al 15)",
                 "2. 2.ª Quincena (Días 16 al final de mes)",
                 "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
-                "Todos los Registros",
                 "Rango de Fechas Personalizado"
             ],
             key="b_beis_filtro"
@@ -890,7 +911,6 @@ else:
 
             st.dataframe(df_picheos, use_container_width=True, hide_index=True)
 
-            # CRUD: BOTONES PARA MODIFICAR, CORREGIR O ELIMINAR LOTES
             with st.expander("🛠️ Modificar, Corregir o Eliminar Lotes de Picheos"):
                 tab_ep1, tab_ep2 = st.tabs(["✏️ Modificar / Corregir Lote", "🗑️ Eliminar Lote"])
                 
