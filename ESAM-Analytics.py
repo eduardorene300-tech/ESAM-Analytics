@@ -6,7 +6,7 @@ from psycopg2.extras import RealDictCursor
 import streamlit as st
 
 # =========================================================
-# 1. CONFIGURACIÓN GENERAL DE LA PÁGINA Y ESTILOS
+# 1. CONFIGURACIÓN GENERAL DE LA PÁGINA Y LOGOTIPO
 # =========================================================
 st.set_page_config(
     page_title="ESAM Analytics 360°",
@@ -400,8 +400,8 @@ if "user_info" not in st.session_state:
     st.session_state.user_info = None
 
 if not st.session_state.authenticated:
-    st.title("🏆 ESAM Analytics 360°")
-    st.caption("Plataforma Profesional de Análisis y Control Operativo (Básquetbol & Béisbol)")
+    st.markdown("<h1 style='text-align: center; color: #00AAFF;'>🏆 ESAM ANALYTICS 360°</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #7A90A8;'>Plataforma Profesional de Análisis y Control Operativo</p>", unsafe_allow_html=True)
 
     tab_login, tab_registro = st.tabs(["🔑 Iniciar Sesión", "📝 Registrar Usuario"])
 
@@ -457,7 +457,14 @@ else:
 
     es_admin_estricto = (username_actual == "admin")
 
-    st.sidebar.title("🏆 ESAM Analytics")
+    # LOGOTIPO E IDENTIDAD EN LA BARRA LATERAL
+    st.sidebar.markdown("""
+        <div style='text-align: center; padding: 10px 0;'>
+            <h2 style='color: #00AAFF; margin-bottom: 0; font-family: "Rajdhani", sans-serif;'>🏆 ESAM ANALYTICS</h2>
+            <p style='color: #7A90A8; font-size: 0.8rem; letter-spacing: 2px;'>360° PRO EDITION</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
     st.sidebar.write(f"👤 **Analista:** {user_name}")
     
     opciones_menu_list = [
@@ -562,7 +569,6 @@ else:
         })
         st.dataframe(df_resumen_deportes, use_container_width=True, hide_index=True)
 
-        # TABLA DETALLADA DE TODOS LOS USUARIOS Y SUS MÉTRICAS (EXCLUSIVO ADMIN / GLOBAL)
         if es_admin and target_user_id == 0:
             st.markdown("---")
             st.subheader("👥 Auditoría Detallada por Operador")
