@@ -494,7 +494,7 @@ else:
         st.rerun()
 
     # =========================================================
-    # MÓDULO: PANTALLA PRINCIPAL CON GRÁFICOS Y MÉTRICAS SIN NÚMEROS DUPLICADOS
+    # MÓDULO: PANTALLA PRINCIPAL CON FILTROS Y GRÁFICOS
     # =========================================================
     if opcion_menu == "📊 Panel General y Estadísticas":
         st.title("📊 Panel General y Análisis Estadístico 360°")
@@ -509,13 +509,58 @@ else:
                 for _, r_u in df_usrs.iterrows():
                     opciones_u[f"👤 {r_u['nombre']} (@{r_u['username']})"] = r_u['id']
                 
-                u_seleccionado = st.selectbox("👑 [ADMIN] Seleccionar Analista para Inspección:", list(opciones_u.keys()))
+                st.sidebar.markdown("---")
+                st.sidebar.subheader("👑 Selector de Analista")
+                u_seleccionado = st.sidebar.selectbox("Ver Panel General de:", list(opciones_u.keys()))
                 target_user_id = opciones_u[u_seleccionado]
                 opcion_label = u_seleccionado
-        else:
-            target_user_id = user_id
 
-        st.caption(f"Mostrando análisis operativo de: **{opcion_label}**")
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
+        
+        hoy = date.today()
+        filtro_gen_tipo = st.sidebar.selectbox(
+            "Seleccionar Periodo:",
+            [
+                "Todos los Registros",
+                "1. 1.ª Quincena (Días 1 al 15)",
+                "2. 2.ª Quincena (Días 16 al final de mes)",
+                "Quincena Actual",
+                "Quincena Anterior",
+                "Este Mes Completo",
+                "Rango de Fechas Personalizado"
+            ],
+            key="gen_filtro_sel"
+        )
+
+        if "1. 1.ª Quincena" in filtro_gen_tipo:
+            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
+        elif "2. 2.ª Quincena" in filtro_gen_tipo:
+            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
+        elif filtro_gen_tipo == "Quincena Actual":
+            f_ini, f_fin = obtener_rango_quincena(hoy)
+        elif filtro_gen_tipo == "Quincena Anterior":
+            if hoy.day <= 15:
+                primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
+                ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
+                f_ini, f_fin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
+            else:
+                f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
+        elif filtro_gen_tipo == "Este Mes Completo":
+            f_ini = date(hoy.year, hoy.month, 1)
+            if hoy.month == 12:
+                f_fin = date(hoy.year, 12, 31)
+            else:
+                f_fin = date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
+        elif filtro_gen_tipo == "Rango de Fechas Personalizado":
+            col_fd1, col_fd2 = st.sidebar.columns(2)
+            with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="gen_f_ini")
+            with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="gen_f_fin")
+        else:
+            f_ini = date(2020, 1, 1)
+            f_fin = date(2035, 12, 31)
+
+        st.caption(f"Mostrando análisis operativo de: **{opcion_label}** | Periodo: **{f_ini.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')}**")
 
         conn_gen = get_db_connection()
         total_g_basket = 0.0
@@ -527,11 +572,11 @@ else:
         if conn_gen:
             try:
                 if target_user_id == 0:
-                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos;", conn_gen)
-                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos;", conn_gen)
+                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
+                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
                 else:
-                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s;", conn_gen, params=(target_user_id,))
-                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s;", conn_gen, params=(target_user_id,))
+                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
+                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
 
                 if not df_b_all.empty:
                     total_g_basket = float(df_b_all["tarifa"].sum())
@@ -553,7 +598,7 @@ else:
         promedio_basket = (total_g_basket / total_juegos_b) if total_juegos_b > 0 else 0.00
         tasas_cur = obtener_tasas_globales()
 
-        # TARJETAS DE MÁXIMO NIVEL (SIN TEXTO RECORTADO)
+        # TARJETAS DE MÁXIMO NIVEL
         col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
         col_mg1.metric("💰 Total Acumulado", f"${total_ganancias_general:,.2f}", "📈 Rendimiento Alza")
         col_mg2.metric("🏀 Básquetbol Total", f"${total_g_basket:,.2f}", f"🔺 {total_juegos_b} partidos")
@@ -562,7 +607,7 @@ else:
 
         st.markdown("---")
         
-        # VISUALIZACIÓN GRÁFICA REAL (DISTRIBUCIÓN DE INGRESOS POR DEPORTE)
+        # VISUALIZACIÓN GRÁFICA REAL
         col_g1, col_g2 = st.columns([1, 1])
 
         with col_g1:
@@ -578,7 +623,7 @@ else:
                 fig_pie.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#E8EFF8')
                 st.plotly_chart(fig_pie, use_container_width=True)
             else:
-                st.info("Registra datos en Básquetbol o Béisbol para generar gráficos estadísticos.")
+                st.info("Registra datos en Básquetbol o Béisbol para el periodo seleccionado para generar gráficos.")
 
         with col_g2:
             st.subheader("📈 Análisis y Desglose Operativo")
@@ -592,7 +637,7 @@ else:
 
         if es_admin and target_user_id == 0:
             st.markdown("---")
-            st.subheader("👥 Auditoría General de Operadores en Sistema")
+            st.subheader("👥 Auditoría General de Operadores en Sistema (Filtrado por Periodo)")
             conn_det = get_db_connection()
             if conn_det:
                 try:
@@ -606,11 +651,11 @@ else:
                             COALESCE(SUM(pi.cantidad), 0) AS "Total Picheos",
                             (COALESCE(SUM(pi.cantidad), 0) * (SELECT valor FROM configuracion_global WHERE clave='precio_beisbol')) AS "USD Béisbol"
                         FROM usuarios u
-                        LEFT JOIN partidos p ON u.id = p.usuario_id
-                        LEFT JOIN picheos pi ON u.id = pi.usuario_id
+                        LEFT JOIN partidos p ON u.id = p.usuario_id AND p.fecha BETWEEN %s AND %s
+                        LEFT JOIN picheos pi ON u.id = pi.usuario_id AND pi.fecha BETWEEN %s AND %s
                         GROUP BY u.id, u.username, u.nombre
                         ORDER BY u.id ASC;
-                    """, conn_det)
+                    """, conn_det, params=(f_ini, f_fin, f_ini, f_fin))
                     conn_det.close()
                     
                     if not df_det.empty:
