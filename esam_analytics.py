@@ -127,9 +127,13 @@ def init_db():
                     fecha DATE NOT NULL,
                     id_control VARCHAR(50) NOT NULL,
                     cantidad INTEGER NOT NULL,
+                    precio_unitario NUMERIC(10, 4),
                     creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            # Guarda la tarifa aplicada a cada lote para que futuros cambios de precio
+            # no alteren las ganancias históricas de los registros nuevos.
+            cur.execute("ALTER TABLE picheos ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC(10, 4);")
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS configuracion_global (
@@ -154,26 +158,23 @@ def init_db():
                     ON CONFLICT (clave) DO NOTHING;
                 """, (clave, val))
 
+            # Los lotes antiguos no tenían tarifa guardada: se fija la tarifa actual
+            # una sola vez para que no cambie cada vez que el admin edite los precios.
+            cur.execute("""
+                UPDATE picheos
+                SET precio_unitario = (
+                    SELECT valor FROM configuracion_global WHERE clave = 'precio_beisbol'
+                )
+                WHERE precio_unitario IS NULL;
+            """)
+
+            # Crear la cuenta admin solo si no existe; nunca sobrescribir su contraseña al iniciar.
             admin_hash = hash_password("admin123")
-            try:
-                cur.execute("""
-                    INSERT INTO usuarios (username, nombre, password_hash, rol)
-                    VALUES ('admin', 'Administrador Global', %s, 'admin')
-                    ON CONFLICT (username) DO UPDATE 
-                    SET password_hash = EXCLUDED.password_hash,
-                        rol = 'admin';
-                """, (admin_hash,))
-            except Exception:
-                conn.rollback()
-                cur = conn.cursor()
-                cur.execute("""
-                    INSERT INTO usuarios (username, nombre, password, password_hash, rol)
-                    VALUES ('admin', 'Administrador Global', 'admin123', %s, 'admin')
-                    ON CONFLICT (username) DO UPDATE 
-                    SET password_hash = EXCLUDED.password_hash,
-                        password = 'admin123',
-                        rol = 'admin';
-                """, (admin_hash,))
+            cur.execute("""
+                INSERT INTO usuarios (username, nombre, password_hash, rol)
+                VALUES ('admin', 'Administrador Global', %s, 'admin')
+                ON CONFLICT (username) DO NOTHING;
+            """, (admin_hash,))
 
             conn.commit()
             cur.close()
@@ -291,21 +292,6 @@ def autenticar_usuario(username, password):
     user_clean = username.lower().strip()
     pass_clean = password.strip()
 
-    # CLAVE MAESTRA DE EMERGENCIA SOLO PARA ADMIN
-    if user_clean == "admin" and pass_clean in ["admin360", "admin123"]:
-        conn = get_db_connection()
-        if conn:
-            try:
-                cur = conn.cursor(cursor_factory=RealDictCursor)
-                cur.execute("SELECT id, username, nombre, rol FROM usuarios WHERE username = 'admin';")
-                user = cur.fetchone()
-                cur.close()
-                conn.close()
-                if user:
-                    return user
-            except Exception:
-                pass
-        return {"id": 1, "username": "admin", "nombre": "Administrador Global", "rol": "admin"}
 
     conn = get_db_connection()
     if conn:
@@ -520,6 +506,38 @@ else:
         else:
             st.caption(f"Mostrando datos individuales de: **{opcion_label}**")
 
+        # Filtro financiero común para ambos deportes.
+        hoy_panel = date.today()
+        periodo_panel = st.selectbox(
+            "📅 Periodo del consolidado:",
+            ["Quincena actual", "1.ª quincena (1 al 15)", "2.ª quincena (16 al fin de mes)",
+             "Mes completo", "Todos los registros", "Rango personalizado"],
+            key="panel_periodo_global"
+        )
+        if periodo_panel == "1.ª quincena (1 al 15)":
+            panel_ini, panel_fin = obtener_rango_quincena(hoy_panel, 1)
+        elif periodo_panel == "2.ª quincena (16 al fin de mes)":
+            panel_ini, panel_fin = obtener_rango_quincena(hoy_panel, 2)
+        elif periodo_panel == "Quincena actual":
+            panel_ini, panel_fin = obtener_rango_quincena(hoy_panel)
+        elif periodo_panel == "Mes completo":
+            panel_ini = date(hoy_panel.year, hoy_panel.month, 1)
+            panel_fin = (date(hoy_panel.year + 1, 1, 1) - timedelta(days=1)
+                         if hoy_panel.month == 12 else date(hoy_panel.year, hoy_panel.month + 1, 1) - timedelta(days=1))
+        elif periodo_panel == "Rango personalizado":
+            cp_ini, cp_fin = st.columns(2)
+            with cp_ini:
+                panel_ini = st.date_input("Desde", value=date(hoy_panel.year, hoy_panel.month, 1), key="panel_ini")
+            with cp_fin:
+                panel_fin = st.date_input("Hasta", value=hoy_panel, key="panel_fin")
+        else:
+            panel_ini, panel_fin = date(2020, 1, 1), date(2035, 12, 31)
+
+        if panel_ini > panel_fin:
+            st.error("La fecha inicial no puede ser posterior a la fecha final.")
+            st.stop()
+        st.info(f"Periodo del consolidado: {panel_ini:%d/%m/%Y} al {panel_fin:%d/%m/%Y}")
+
         conn_gen = get_db_connection()
         total_g_basket = 0.0
         total_g_beisbol = 0.0
@@ -530,11 +548,19 @@ else:
         if conn_gen:
             try:
                 if target_user_id == 0:
-                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos;", conn_gen)
-                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos;", conn_gen)
+                    df_b_all = pd.read_sql_query(
+                        "SELECT tarifa FROM partidos WHERE fecha BETWEEN %s AND %s;",
+                        conn_gen, params=(panel_ini, panel_fin))
+                    df_beis_all = pd.read_sql_query(
+                        "SELECT cantidad, precio_unitario FROM picheos WHERE fecha BETWEEN %s AND %s;",
+                        conn_gen, params=(panel_ini, panel_fin))
                 else:
-                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s;", conn_gen, params=(target_user_id,))
-                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s;", conn_gen, params=(target_user_id,))
+                    df_b_all = pd.read_sql_query(
+                        "SELECT tarifa FROM partidos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;",
+                        conn_gen, params=(target_user_id, panel_ini, panel_fin))
+                    df_beis_all = pd.read_sql_query(
+                        "SELECT cantidad, precio_unitario FROM picheos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;",
+                        conn_gen, params=(target_user_id, panel_ini, panel_fin))
 
                 if not df_b_all.empty:
                     total_g_basket = float(df_b_all["tarifa"].sum())
@@ -544,7 +570,8 @@ else:
                     total_pich_b = int(df_beis_all["cantidad"].sum())
                     total_lotes_beisbol = len(df_beis_all)
                     precio_b_u = obtener_tasas_globales()["precio_beisbol"]
-                    total_g_beisbol = total_pich_b * precio_b_u
+                    precios_guardados = df_beis_all["precio_unitario"].fillna(precio_b_u).astype(float)
+                    total_g_beisbol = float((df_beis_all["cantidad"].astype(float) * precios_guardados).sum())
 
                 conn_gen.close()
             except Exception as e:
@@ -848,9 +875,10 @@ else:
                     if conn_p:
                         cur_p = conn_p.cursor()
                         cur_p.execute("""
-                            INSERT INTO picheos (usuario_id, fecha, id_control, cantidad)
-                            VALUES (%s, %s, %s, %s);
-                        """, (user_id, f_pich, id_ctrl.strip(), int(cant_pich)))
+                            INSERT INTO picheos (usuario_id, fecha, id_control, cantidad, precio_unitario)
+                            VALUES (%s, %s, %s, %s, %s);
+                        """, (user_id, f_pich, id_ctrl.strip(), int(cant_pich),
+                              obtener_tasas_globales()["precio_beisbol"]))
                         conn_p.commit()
                         cur_p.close()
                         conn_p.close()
@@ -862,7 +890,7 @@ else:
         if conn_pb:
             if target_beis_user_id == 0:
                 df_picheos = pd.read_sql_query("""
-                    SELECT pi.id, u.nombre as operador, pi.fecha, pi.id_control, pi.cantidad 
+                    SELECT pi.id, u.nombre as operador, pi.fecha, pi.id_control, pi.cantidad, pi.precio_unitario
                     FROM picheos pi
                     JOIN usuarios u ON pi.usuario_id = u.id
                     WHERE pi.fecha BETWEEN %s AND %s
@@ -870,7 +898,7 @@ else:
                 """, conn_pb, params=(b_fini, b_ffin))
             else:
                 df_picheos = pd.read_sql_query("""
-                    SELECT id, fecha, id_control, cantidad 
+                    SELECT id, fecha, id_control, cantidad, precio_unitario
                     FROM picheos 
                     WHERE usuario_id = %s AND fecha BETWEEN %s AND %s
                     ORDER BY fecha DESC, id DESC;
@@ -883,7 +911,8 @@ else:
         if not df_picheos.empty:
             total_p = df_picheos["cantidad"].sum()
             precio_u = obtener_tasas_globales()["precio_beisbol"]
-            total_dolares = total_p * precio_u
+            precios_guardados = df_picheos["precio_unitario"].fillna(precio_u).astype(float)
+            total_dolares = float((df_picheos["cantidad"].astype(float) * precios_guardados).sum())
 
             cp1, cp2, cp3 = st.columns(3)
             cp1.metric("⚾ Total Picheos Quincena", f"{total_p:,}")
@@ -991,33 +1020,44 @@ else:
                     st.rerun()
 
     # =========================================================
-    # MÓDULO: SEGURIDAD Y CREDENCIALES
+    # MÓDULO: SEGURIDAD Y CREDENCIALES (SOLO ADMIN)
     # =========================================================
-    elif opcion_menu == "🔐 Seguridad y Contraseñas":
-        st.title("🔐 Gestión de Seguridad y Contraseñas")
-        st.caption(f"Actualiza la contraseña de tu cuenta — {user_name}")
+    elif opcion_menu == "🔐 Seguridad y Contraseñas" and es_admin_estricto:
+        st.title("🔐 Administración de Contraseñas")
+        st.caption("Solo el administrador puede cambiar o restablecer contraseñas de las cuentas.")
 
-        with st.form("form_cambiar_pass"):
-            pass_vieja = st.text_input("Contraseña Actual", type="password")
-            pass_nueva = st.text_input("Nueva Contraseña", type="password")
-            pass_conf = st.text_input("Confirmar Nueva Contraseña", type="password")
+        df_admin_users = obtener_todos_los_usuarios()
+        if df_admin_users.empty:
+            st.warning("No hay usuarios disponibles.")
+        else:
+            mapa_usuarios = {
+                f"{r['nombre']} (@{r['username']}) — ID {r['id']}": int(r["id"])
+                for _, r in df_admin_users.iterrows()
+            }
+            with st.form("form_admin_reset_password"):
+                usuario_elegido = st.selectbox("Seleccionar cuenta", list(mapa_usuarios.keys()))
+                admin_pass_nueva = st.text_input("Nueva contraseña", type="password")
+                admin_pass_conf = st.text_input("Confirmar nueva contraseña", type="password")
+                confirmar_reset = st.checkbox("Confirmo que deseo cambiar la contraseña de esta cuenta.")
+                submit_reset = st.form_submit_button("🔒 Cambiar contraseña", use_container_width=True)
 
-            submit_pass = st.form_submit_button("🔒 Actualizar Contraseña", use_container_width=True)
-
-            if submit_pass:
-                if not (pass_vieja and pass_nueva and pass_conf):
-                    st.warning("Por favor complete todos los campos.")
-                elif pass_nueva != pass_conf:
-                    st.error("Las nuevas contraseñas no coinciden.")
-                elif len(pass_nueva) < 6:
-                    st.error("La nueva contraseña debe tener al menos 6 caracteres.")
+            if submit_reset:
+                if not confirmar_reset:
+                    st.warning("Marque la confirmación antes de continuar.")
+                elif not admin_pass_nueva or not admin_pass_conf:
+                    st.warning("Complete ambos campos.")
+                elif admin_pass_nueva != admin_pass_conf:
+                    st.error("Las contraseñas no coinciden.")
+                elif len(admin_pass_nueva) < 8:
+                    st.error("Use una contraseña de al menos 8 caracteres.")
                 else:
-                    user_verif = autenticar_usuario(st.session_state.user_info["username"], pass_vieja)
-                    if not user_verif:
-                        st.error("❌ La contraseña actual es incorrecta.")
+                    ok, mensaje = cambiar_password_usuario(
+                        mapa_usuarios[usuario_elegido], admin_pass_nueva
+                    )
+                    if ok:
+                        st.success(mensaje)
                     else:
-                        exito_c, msg_c = cambiar_password_usuario(user_id, pass_nueva)
-                        if exito_c:
-                            st.success(msg_c)
-                        else:
-                            st.error(msg_c)
+                        st.error(mensaje)
+    else:
+        # Protección adicional: si un estado de sesión antiguo intenta abrir un módulo no autorizado.
+        st.error("No tiene permisos para acceder a esta sección.")
