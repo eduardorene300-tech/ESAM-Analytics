@@ -188,7 +188,7 @@ init_db()
 
 
 # =========================================================
-# 5. CONSULTAS OPTIMIZADAS CON CACHÉ
+# 5. CONSULTAS OPTIMIZADAS CON CACHÉ Y RECÁLCULO RETROACTIVO
 # =========================================================
 @st.cache_data(ttl=5)
 def obtener_tasas_globales():
@@ -252,6 +252,46 @@ def obtener_tarifa_basket(tipo_partido, cant_partidos=0):
         elif cant_partidos <= 14: return tasas["tramo_2"]
         elif cant_partidos <= 29: return tasas["tramo_3"]
         else: return tasas["tramo_4"]
+
+
+def recalcular_tarifas_quincena_basket(u_id, fecha_ref):
+    """
+    Función que recalcula RETROACTIVAMENTE todos los partidos de modalidad 'quincenal'
+    del usuario en la quincena correspondiente a la fecha dada.
+    """
+    iq_i, iq_f = obtener_rango_quincena(fecha_ref)
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            # Contar total de partidos quincenales en el periodo
+            cur.execute("""
+                SELECT COUNT(*) FROM partidos 
+                WHERE usuario_id = %s 
+                  AND fecha >= %s 
+                  AND fecha <= %s 
+                  AND (tipo_partido IS NULL OR tipo_partido = 'quincenal');
+            """, (u_id, iq_i, iq_f))
+            total_partidos = cur.fetchone()[0]
+
+            # Calcular la tarifa que le corresponde a TODOS
+            nueva_tarifa = obtener_tarifa_basket("quincenal", total_partidos)
+
+            # Actualizar todos los partidos quincenales de esa quincena
+            cur.execute("""
+                UPDATE partidos 
+                SET tarifa = %s 
+                WHERE usuario_id = %s 
+                  AND fecha >= %s 
+                  AND fecha <= %s 
+                  AND (tipo_partido IS NULL OR tipo_partido = 'quincenal');
+            """, (nueva_tarifa, u_id, iq_i, iq_f))
+
+            conn.commit()
+            cur.close()
+            conn.close()
+        except Exception as e:
+            st.error(f"Error al recalcular tarifas de la quincena: {e}")
 
 
 # =========================================================
@@ -665,7 +705,7 @@ else:
                     st.error(f"Error cargando detalle de usuarios: {e}")
 
     # =========================================================
-    # MÓDULO 1: BÁSQUETBOL
+    # MÓDULO 1: BÁSQUETBOL (CON RECÁLCULO RETROACTIVO)
     # =========================================================
     elif opcion_menu == "🏀 Módulo Básquetbol":
         st.title("🏀 ESAM Analytics — Módulo Básquetbol")
@@ -730,6 +770,13 @@ else:
 
         st.info(f"📅 **Periodo Evaluado:** Del **{f_ini.strftime('%d/%m/%Y')}** al **{f_fin.strftime('%d/%m/%Y')}**")
 
+        # Botón de mantenimiento rápido para recalcular quincena manualmente
+        if st.button("🔄 Recalcular Tarifas Retroactivas de esta Quincena", use_container_width=False):
+            recalcular_tarifas_quincena_basket(user_id, f_ini)
+            st.cache_data.clear()
+            st.success("✅ Recálculo retroactivo completado.")
+            st.rerun()
+
         with st.expander("➕ Registrar Nuevo Partido de Básquetbol", expanded=False):
             col_m1, _ = st.columns([2, 2])
             with col_m1:
@@ -749,16 +796,7 @@ else:
                 tarifa_calc = tasas_v["en_vivo_normal"]
             else:
                 t_guardar = "quincenal"
-                iq_i, iq_f = obtener_rango_quincena(fecha_p)
-                conn_c = get_db_connection()
-                cnt_q = 0
-                if conn_c:
-                    cur_c = conn_c.cursor()
-                    cur_c.execute("SELECT COUNT(*) FROM partidos WHERE usuario_id=%s AND fecha >= %s AND fecha <= %s AND (tipo_partido IS NULL OR tipo_partido='quincenal')", (user_id, iq_i, iq_f))
-                    cnt_q = cur_c.fetchone()[0]
-                    cur_c.close()
-                    conn_c.close()
-                tarifa_calc = obtener_tarifa_basket("quincenal", cnt_q + 1)
+                tarifa_calc = tasas_v["tramo_1"] # Se asignará y recalculará inmediatamente
 
             if st.button("💾 Guardar Partido", use_container_width=True):
                 if not codigo_p.strip():
@@ -774,8 +812,13 @@ else:
                         conn_s.commit()
                         cur_s.close()
                         conn_s.close()
+                        
+                        # Si es modalidad quincenal, recalcular retroactivamente
+                        if t_guardar == "quincenal":
+                            recalcular_tarifas_quincena_basket(user_id, fecha_p)
+
                         st.cache_data.clear()
-                        st.success("✅ Partido guardado exitosamente.")
+                        st.success("✅ Partido guardado y tarifas actualizadas retroactivamente.")
                         st.rerun()
 
         conn_q = get_db_connection()
@@ -831,8 +874,10 @@ else:
                                 conn_eb.commit()
                                 cur_eb.close()
                                 conn_eb.close()
+
+                                recalcular_tarifas_quincena_basket(user_id, fe_b)
                                 st.cache_data.clear()
-                                st.success("✅ Partido modificado y corregido con éxito.")
+                                st.success("✅ Partido modificado y quincena recalculada con éxito.")
                                 st.rerun()
 
                 with tab_eb2:
@@ -841,12 +886,19 @@ else:
                         conn_db = get_db_connection()
                         if conn_db:
                             cur_db = conn_db.cursor()
+                            # Obtener la fecha antes de borrar
+                            cur_db.execute("SELECT fecha FROM partidos WHERE id = %s;", (id_del_b,))
+                            r_f = cur_db.fetchone()
+                            fecha_borrada = r_f[0] if r_f else date.today()
+
                             cur_db.execute("DELETE FROM partidos WHERE id = %s;", (id_del_b,))
                             conn_db.commit()
                             cur_db.close()
                             conn_db.close()
+
+                            recalcular_tarifas_quincena_basket(user_id, fecha_borrada)
                             st.cache_data.clear()
-                            st.success("🗑️ Partido eliminado correctamente.")
+                            st.success("🗑️ Partido eliminado y quincena recalculada correctamente.")
                             st.rerun()
 
             csv_b = df_basket.to_csv(index=False).encode("utf-8")
