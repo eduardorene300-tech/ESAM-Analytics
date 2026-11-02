@@ -1,5 +1,7 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import hashlib
+import hmac
+import os
 import pandas as pd
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -17,7 +19,7 @@ ZONA_HORARIA_UTC_OFFSET = -4  # Venezuela / Bolivia (UTC-4). Ajusta si cambias d
 
 def ahora_local():
     """Fecha y hora local real del operador (UTC + desfase)."""
-    return datetime.utcnow() + timedelta(hours=ZONA_HORARIA_UTC_OFFSET)
+    return datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=ZONA_HORARIA_UTC_OFFSET)
 
 
 def hoy_local():
@@ -109,10 +111,55 @@ html, body, [data-testid="stAppViewContainer"] {
 
 
 # =========================================================
-# 2. SEGURIDAD Y ENCRIPTACIÓN (SHA-256)
+# 2. SEGURIDAD Y ENCRIPTACIÓN (PBKDF2-SHA256 CON SAL)
 # =========================================================
+PBKDF2_ITERACIONES = 240_000
+
+
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    """Hash con sal aleatoria: pbkdf2_sha256$iteraciones$sal$hash."""
+    sal = os.urandom(16)
+    digesto = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), sal, PBKDF2_ITERACIONES)
+    return f"pbkdf2_sha256${PBKDF2_ITERACIONES}${sal.hex()}${digesto.hex()}"
+
+
+def verificar_password(password: str, hash_guardado) -> bool:
+    """Verifica la clave contra el hash nuevo (con sal) o el viejo SHA-256."""
+    if not hash_guardado:
+        return False
+    guardado = str(hash_guardado)
+    if guardado.startswith("pbkdf2_sha256$"):
+        try:
+            _, iteraciones, sal_hex, digesto_hex = guardado.split("$")
+            digesto = hashlib.pbkdf2_hmac(
+                "sha256", password.encode("utf-8"), bytes.fromhex(sal_hex), int(iteraciones)
+            )
+            return hmac.compare_digest(digesto.hex(), digesto_hex)
+        except Exception:
+            return False
+    # Compatibilidad con el hash antiguo (SHA-256 sin sal), se migra al iniciar sesión
+    return hmac.compare_digest(hashlib.sha256(password.encode("utf-8")).hexdigest(), guardado)
+
+
+def hash_es_legado(hash_guardado) -> bool:
+    """True si el hash guardado es del esquema viejo (sin sal) o está vacío."""
+    return not str(hash_guardado or "").startswith("pbkdf2_sha256$")
+
+
+def _secreto(clave, defecto=None):
+    try:
+        if clave in st.secrets:
+            return st.secrets[clave]
+    except Exception:
+        pass
+    return defecto
+
+
+# Contraseña inicial del admin. Puedes fijarla en st.secrets con: admin_password = "..."
+ADMIN_PASSWORD_INICIAL = _secreto("admin_password", "admin123")
+
+# Aviso único si las tarifas no se pueden leer de la base de datos
+AVISO_TASAS_MOSTRADO = {"visto": False}
 
 
 # =========================================================
@@ -127,6 +174,15 @@ def get_db_connection():
     except Exception as e:
         st.error(f"❌ Error de conexión a Neon PostgreSQL: {e}")
         return None
+
+
+def cerrar_conexion(conn):
+    """Cierra la conexión sin romper la app si ya estaba cerrada."""
+    try:
+        if conn is not None:
+            conn.close()
+    except Exception:
+        pass
 
 
 # =========================================================
@@ -153,7 +209,14 @@ def init_db():
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS password_hash VARCHAR(64) DEFAULT '';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS rol VARCHAR(30) DEFAULT 'operador';")
             cur.execute("ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-            
+
+            # El hash nuevo (PBKDF2 con sal) ocupa más de 64 caracteres
+            try:
+                cur.execute("ALTER TABLE usuarios ALTER COLUMN password_hash TYPE VARCHAR(200);")
+            except Exception:
+                conn.rollback()
+                cur = conn.cursor()
+
             try:
                 cur.execute("ALTER TABLE usuarios ALTER COLUMN password DROP NOT NULL;")
             except Exception:
@@ -191,11 +254,18 @@ def init_db():
                 );
             """)
 
+            # Índices: sin ellos cada consulta recorre la tabla completa
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_partidos_usuario_fecha ON partidos (usuario_id, fecha);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_partidos_fecha ON partidos (fecha);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_picheos_usuario_fecha ON picheos (usuario_id, fecha);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_picheos_fecha ON picheos (fecha);")
+
             defaults = [
                 ("tasa_tramo_1", 6.00),
                 ("tasa_tramo_2", 6.50),
                 ("tasa_tramo_3", 7.00),
-                ("tasa_tramo_4", 8.00),
+                ("tasa_tramo_4", 7.50),
+                ("tasa_tramo_5", 8.00),
                 ("tasa_en_vivo_normal", 12.00),
                 ("tasa_en_vivo_nba", 18.50),
                 ("precio_beisbol", 0.024),
@@ -207,26 +277,44 @@ def init_db():
                     ON CONFLICT (clave) DO NOTHING;
                 """, (clave, val))
 
-            admin_hash = hash_password("admin123")
+            # Migración única al esquema de 5 tramos de básquetbol
+            cur.execute("SELECT valor FROM configuracion_global WHERE clave = 'esquema_tramos_basket';")
+            if cur.fetchone() is None:
+                tramos_nuevos = [
+                    ("tasa_tramo_1", 6.00),
+                    ("tasa_tramo_2", 6.50),
+                    ("tasa_tramo_3", 7.00),
+                    ("tasa_tramo_4", 7.50),
+                    ("tasa_tramo_5", 8.00),
+                ]
+                for clave_t, val_t in tramos_nuevos:
+                    cur.execute("""
+                        INSERT INTO configuracion_global (clave, valor)
+                        VALUES (%s, %s)
+                        ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor;
+                    """, (clave_t, val_t))
+                cur.execute("""
+                    INSERT INTO configuracion_global (clave, valor)
+                    VALUES ('esquema_tramos_basket', 2)
+                    ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor;
+                """)
+
+            # El admin se crea una sola vez: no se resetea la clave en cada arranque
+            admin_hash = hash_password(ADMIN_PASSWORD_INICIAL)
             try:
                 cur.execute("""
                     INSERT INTO usuarios (username, nombre, password_hash, rol)
                     VALUES ('admin', 'Administrador Global', %s, 'admin')
-                    ON CONFLICT (username) DO UPDATE 
-                    SET password_hash = EXCLUDED.password_hash,
-                        rol = 'admin';
+                    ON CONFLICT (username) DO NOTHING;
                 """, (admin_hash,))
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
                 cur.execute("""
                     INSERT INTO usuarios (username, nombre, password, password_hash, rol)
-                    VALUES ('admin', 'Administrador Global', 'admin123', %s, 'admin')
-                    ON CONFLICT (username) DO UPDATE 
-                    SET password_hash = EXCLUDED.password_hash,
-                        password = 'admin123',
-                        rol = 'admin';
-                """, (admin_hash,))
+                    VALUES ('admin', 'Administrador Global', %s, %s, 'admin')
+                    ON CONFLICT (username) DO NOTHING;
+                """, (ADMIN_PASSWORD_INICIAL, admin_hash))
 
             conn.commit()
             cur.close()
@@ -245,52 +333,67 @@ init_db()
 # =========================================================
 @st.cache_data(ttl=5)
 def obtener_tasas_globales():
-    conn = get_db_connection()
     tasas = {
         "tramo_1": 6.00,
         "tramo_2": 6.50,
         "tramo_3": 7.00,
-        "tramo_4": 8.00,
+        "tramo_4": 7.50,
+        "tramo_5": 8.00,
         "en_vivo_normal": 12.00,
         "en_vivo_nba": 18.50,
         "precio_beisbol": 0.024,
     }
+    conn = get_db_connection()
     if conn:
+        cur = None
         try:
             cur = conn.cursor(cursor_factory=RealDictCursor)
             cur.execute("SELECT clave, valor FROM configuracion_global;")
-            rows = cur.fetchall()
-            for r in rows:
+            for r in cur.fetchall():
                 k = r["clave"]
                 val = float(r["valor"])
                 if k == "tasa_tramo_1": tasas["tramo_1"] = val
                 elif k == "tasa_tramo_2": tasas["tramo_2"] = val
                 elif k == "tasa_tramo_3": tasas["tramo_3"] = val
                 elif k == "tasa_tramo_4": tasas["tramo_4"] = val
+                elif k == "tasa_tramo_5": tasas["tramo_5"] = val
                 elif k == "tasa_en_vivo_normal": tasas["en_vivo_normal"] = val
                 elif k == "tasa_en_vivo_nba": tasas["en_vivo_nba"] = val
                 elif k == "precio_beisbol": tasas["precio_beisbol"] = val
-            cur.close()
-            conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            # No se oculta el fallo: sin BD se estarían usando precios de fábrica
+            if not AVISO_TASAS_MOSTRADO["visto"]:
+                AVISO_TASAS_MOSTRADO["visto"] = True
+                st.warning(f"⚠️ No se pudieron leer las tarifas de la base de datos ({e}). Se muestran las de fábrica.")
+        finally:
+            try:
+                if cur is not None: cur.close()
+            except Exception:
+                pass
+            cerrar_conexion(conn)
     return tasas
 
 
 def actualizar_tasa_global(clave, nuevo_valor):
     conn = get_db_connection()
     if conn:
+        cur = None
         try:
             cur = conn.cursor()
             cur.execute("UPDATE configuracion_global SET valor = %s WHERE clave = %s;", (nuevo_valor, clave))
             conn.commit()
-            cur.close()
-            conn.close()
             st.cache_data.clear()
             return True
         except Exception as e:
+            conn.rollback()
             st.error(f"Error al actualizar tasa: {e}")
             return False
+        finally:
+            try:
+                if cur is not None: cur.close()
+            except Exception:
+                pass
+            cerrar_conexion(conn)
     return False
 
 
@@ -303,8 +406,9 @@ def obtener_tarifa_basket(tipo_partido, cant_partidos=0):
     else:
         if cant_partidos <= 11: return tasas["tramo_1"]
         elif cant_partidos <= 14: return tasas["tramo_2"]
-        elif cant_partidos <= 29: return tasas["tramo_3"]
-        else: return tasas["tramo_4"]
+        elif cant_partidos <= 26: return tasas["tramo_3"]
+        elif cant_partidos <= 29: return tasas["tramo_4"]
+        else: return tasas["tramo_5"]
 
 
 def recalcular_tarifas_quincena_basket(u_id, fecha_ref):
@@ -353,10 +457,30 @@ def recalcular_tarifas_quincena_basket(u_id, fecha_ref):
             """, (nueva_tarifa, u_id, iq_i, iq_f))
 
             conn.commit()
-            cur.close()
-            conn.close()
         except Exception as e:
             st.error(f"Error al recalcular quincena: {e}")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+            cerrar_conexion(conn)
+
+
+def recalcular_si_hace_falta(u_id, fecha_ref):
+    """Recalcula la quincena una sola vez por sesión (evita consultas en cada clic)."""
+    iq_i, iq_f = obtener_rango_quincena(fecha_ref)
+    hechos = st.session_state.setdefault("_recalculos_hechos", set())
+    clave = f"{u_id}|{iq_i}|{iq_f}"
+    if clave in hechos:
+        return
+    recalcular_tarifas_quincena_basket(u_id, fecha_ref)
+    hechos.add(clave)
+
+
+def olvidar_recalculos():
+    """Fuerza a recalcular en la próxima vista (tras cambiar datos o precios)."""
+    st.session_state["_recalculos_hechos"] = set()
 
 
 # =========================================================
@@ -365,89 +489,119 @@ def recalcular_tarifas_quincena_basket(u_id, fecha_ref):
 def registrar_usuario(username, nombre, password, rol="operador"):
     conn = get_db_connection()
     if conn:
+        cur = None
         try:
             cur = conn.cursor()
-            pwd_hash = hash_password(password)
-            try:
-                cur.execute("""
-                    INSERT INTO usuarios (username, nombre, password_hash, rol)
-                    VALUES (%s, %s, %s, %s);
-                """, (username.lower().strip(), nombre.strip(), pwd_hash, rol))
-            except Exception:
-                conn.rollback()
-                cur = conn.cursor()
-                cur.execute("""
-                    INSERT INTO usuarios (username, nombre, password, password_hash, rol)
-                    VALUES (%s, %s, %s, %s, %s);
-                """, (username.lower().strip(), nombre.strip(), password, pwd_hash, rol))
+            cur.execute("""
+                INSERT INTO usuarios (username, nombre, password_hash, rol)
+                VALUES (%s, %s, %s, %s);
+            """, (username.lower().strip(), nombre.strip(), hash_password(password), rol))
             conn.commit()
-            cur.close()
-            conn.close()
             st.cache_data.clear()
             return True, "✅ Usuario registrado exitosamente."
         except psycopg2.IntegrityError:
+            conn.rollback()
             return False, "⚠️ El nombre de usuario ya existe."
         except Exception as e:
+            conn.rollback()
             return False, f"❌ Error en registro: {e}"
+        finally:
+            try:
+                if cur is not None: cur.close()
+            except Exception:
+                pass
+            cerrar_conexion(conn)
     return False, "❌ Error de conexión a BD."
 
 
 def autenticar_usuario(username, password):
+    """Valida la clave en Python y migra el hash viejo en el mismo inicio de sesión."""
     user_clean = username.lower().strip()
     pass_clean = password.strip()
 
-    if user_clean == "admin" and pass_clean in ["admin360", "admin123"]:
-        conn = get_db_connection()
-        if conn:
-            try:
-                cur = conn.cursor(cursor_factory=RealDictCursor)
-                cur.execute("SELECT id, username, nombre, rol FROM usuarios WHERE username = 'admin';")
-                user = cur.fetchone()
-                cur.close()
-                conn.close()
-                if user:
-                    return user
-            except Exception:
-                pass
-        return {"id": 1, "username": "admin", "nombre": "Administrador Global", "rol": "admin"}
-
     conn = get_db_connection()
-    if conn:
+    if not conn:
+        return None
+
+    cur = None
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         try:
-            cur = conn.cursor(cursor_factory=RealDictCursor)
-            pwd_hash = hash_password(pass_clean)
             cur.execute("""
-                SELECT id, username, nombre, rol FROM usuarios
-                WHERE username = %s AND (password_hash = %s OR password = %s);
-            """, (user_clean, pwd_hash, pass_clean))
-            user = cur.fetchone()
-            cur.close()
-            conn.close()
-            return user
-        except Exception as e:
-            st.error(f"Error al autenticar: {e}")
+                SELECT id, username, nombre, rol, password_hash, password
+                FROM usuarios WHERE username = %s;
+            """, (user_clean,))
+            fila = cur.fetchone()
+        except Exception:
+            # Bases antiguas sin columna 'password'
+            conn.rollback()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("""
+                SELECT id, username, nombre, rol, password_hash
+                FROM usuarios WHERE username = %s;
+            """, (user_clean,))
+            fila = cur.fetchone()
+
+        if not fila:
             return None
-    return None
+
+        clave_plana = fila.get("password")
+        coincide = verificar_password(pass_clean, fila.get("password_hash"))
+        if not coincide and clave_plana and hmac.compare_digest(str(clave_plana), pass_clean):
+            coincide = True
+        if not coincide:
+            return None
+
+        # Migración silenciosa: pasa de SHA-256/plano a PBKDF2 con sal
+        if hash_es_legado(fila.get("password_hash")) or clave_plana:
+            try:
+                cur.execute(
+                    "UPDATE usuarios SET password_hash = %s, password = NULL WHERE id = %s;",
+                    (hash_password(pass_clean), fila["id"]),
+                )
+                conn.commit()
+            except Exception:
+                conn.rollback()
+
+        return {"id": fila["id"], "username": fila["username"], "nombre": fila["nombre"], "rol": fila["rol"]}
+    except Exception as e:
+        st.error(f"Error al autenticar: {e}")
+        return None
+    finally:
+        try:
+            if cur is not None: cur.close()
+        except Exception:
+            pass
+        cerrar_conexion(conn)
 
 
 def cambiar_password_usuario(user_id, nueva_password):
     conn = get_db_connection()
     if conn:
+        cur = None
         try:
             cur = conn.cursor()
-            pwd_hash = hash_password(nueva_password)
+            nuevo_hash = hash_password(nueva_password)
             try:
-                cur.execute("UPDATE usuarios SET password_hash = %s, password = %s WHERE id = %s;", (pwd_hash, nueva_password, user_id))
+                cur.execute(
+                    "UPDATE usuarios SET password_hash = %s, password = NULL WHERE id = %s;",
+                    (nuevo_hash, user_id),
+                )
             except Exception:
                 conn.rollback()
                 cur = conn.cursor()
-                cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (pwd_hash, user_id))
+                cur.execute("UPDATE usuarios SET password_hash = %s WHERE id = %s;", (nuevo_hash, user_id))
             conn.commit()
-            cur.close()
-            conn.close()
             return True, "✅ Contraseña actualizada correctamente."
         except Exception as e:
+            conn.rollback()
             return False, f"❌ Error al actualizar contraseña: {e}"
+        finally:
+            try:
+                if cur is not None: cur.close()
+            except Exception:
+                pass
+            cerrar_conexion(conn)
     return False, "❌ Error de conexión a BD."
 
 
@@ -467,11 +621,12 @@ def obtener_todos_los_usuarios():
             ORDER BY u.id ASC;
         """
         df = pd.read_sql_query(query, conn)
-        conn.close()
         return df
     except Exception as e:
         st.error(f"Error al cargar usuarios: {e}")
         return pd.DataFrame()
+    finally:
+        cerrar_conexion(conn)
 
 
 def obtener_rango_quincena(fecha_ref, numero_quincena=None):
@@ -495,6 +650,47 @@ def obtener_rango_quincena(fecha_ref, numero_quincena=None):
             else:
                 fin_mes = date(anio, mes + 1, 1) - timedelta(days=1)
             return date(anio, mes, 16), fin_mes
+
+
+RANGOS_PERIODO = [
+    "Todos los Registros",
+    "1. 1.ª Quincena (Días 1 al 15)",
+    "2. 2.ª Quincena (Días 16 al final de mes)",
+    "Quincena Anterior",
+    "Este Mes Completo",
+    "Rango de Fechas Personalizado",
+]
+
+
+def selector_periodo(clave, titulo):
+    """Dibuja el filtro de quincena/periodo y devuelve (fecha_inicio, fecha_fin)."""
+    hoy = hoy_local()
+    seleccion = st.sidebar.selectbox(titulo, RANGOS_PERIODO, key=clave)
+
+    if "1. 1.ª Quincena" in seleccion:
+        return obtener_rango_quincena(hoy, numero_quincena=1)
+    if "2. 2.ª Quincena" in seleccion:
+        return obtener_rango_quincena(hoy, numero_quincena=2)
+    if seleccion == "Quincena Anterior":
+        if hoy.day <= 15:
+            primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
+            ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
+            return obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
+        return obtener_rango_quincena(hoy, numero_quincena=1)
+    if seleccion == "Este Mes Completo":
+        fin_mes = date(hoy.year, 12, 31) if hoy.month == 12 else date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
+        return date(hoy.year, hoy.month, 1), fin_mes
+    if seleccion == "Rango de Fechas Personalizado":
+        col_desde, col_hasta = st.sidebar.columns(2)
+        with col_desde:
+            f_ini = st.date_input("Desde", value=hoy - timedelta(days=30), key=f"{clave}_desde")
+        with col_hasta:
+            f_fin = st.date_input("Hasta", value=hoy, key=f"{clave}_hasta")
+        if f_ini > f_fin:
+            st.sidebar.warning("⚠️ 'Desde' es posterior a 'Hasta'. Se invirtieron las fechas.")
+            f_ini, f_fin = f_fin, f_ini
+        return f_ini, f_fin
+    return date(2020, 1, 1), date(2035, 12, 31)
 
 
 # =========================================================
@@ -622,51 +818,16 @@ else:
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
-        
-        hoy = hoy_local()
-        filtro_gen_tipo = st.sidebar.selectbox(
-            "Seleccionar Periodo:",
-            [
-                "Todos los Registros",
-                "1. 1.ª Quincena (Días 1 al 15)",
-                "2. 2.ª Quincena (Días 16 al final de mes)",
-                "Quincena Anterior",
-                "Este Mes Completo",
-                "Rango de Fechas Personalizado"
-            ],
-            key="gen_filtro_sel"
-        )
 
-        if "1. 1.ª Quincena" in filtro_gen_tipo:
-            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif "2. 2.ª Quincena" in filtro_gen_tipo:
-            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
-        elif filtro_gen_tipo == "Quincena Anterior":
-            if hoy.day <= 15:
-                primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
-                ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-                f_ini, f_fin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
-            else:
-                f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif filtro_gen_tipo == "Este Mes Completo":
-            f_ini = date(hoy.year, hoy.month, 1)
-            if hoy.month == 12:
-                f_fin = date(hoy.year, 12, 31)
-            else:
-                f_fin = date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
-        elif filtro_gen_tipo == "Rango de Fechas Personalizado":
-            col_fd1, col_fd2 = st.sidebar.columns(2)
-            with col_fd1: f_ini = st.date_input("Desde", value=hoy_local() - timedelta(days=30), key="gen_f_ini")
-            with col_fd2: f_fin = st.date_input("Hasta", value=hoy_local(), key="gen_f_fin")
-        else:
-            f_ini = date(2020, 1, 1)
-            f_fin = date(2035, 12, 31)
+        f_ini, f_fin = selector_periodo("gen_periodo", "Seleccionar Periodo:")
 
-        # Ejecutar recálculo automático de quincena antes de consultar
-        recalcular_tarifas_quincena_basket(target_user_id, f_ini)
+        # Recálculo automático de quincena (una sola vez por sesión)
+        recalcular_si_hace_falta(target_user_id, f_ini)
 
         st.caption(f"Mostrando análisis operativo de: **{opcion_label}** | Periodo: **{f_ini.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')}**")
 
+        df_b_all = pd.DataFrame()
+        df_beis_all = pd.DataFrame()
         conn_gen = get_db_connection()
         total_g_basket = 0.0
         total_g_beisbol = 0.0
@@ -679,11 +840,11 @@ else:
         if conn_gen:
             try:
                 if target_user_id == 0:
-                    df_b_all = pd.read_sql_query("SELECT tarifa, tiempo_ejecucion FROM partidos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
-                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
+                    df_b_all = pd.read_sql_query("SELECT tarifa, tiempo_ejecucion, fecha FROM partidos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
+                    df_beis_all = pd.read_sql_query("SELECT cantidad, fecha FROM picheos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
                 else:
-                    df_b_all = pd.read_sql_query("SELECT tarifa, tiempo_ejecucion FROM partidos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
-                    df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
+                    df_b_all = pd.read_sql_query("SELECT tarifa, tiempo_ejecucion, fecha FROM partidos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
+                    df_beis_all = pd.read_sql_query("SELECT cantidad, fecha FROM picheos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
 
                 if not df_b_all.empty:
                     total_g_basket = float(df_b_all["tarifa"].sum())
@@ -704,9 +865,10 @@ else:
                     precio_b_u = obtener_tasas_globales()["precio_beisbol"]
                     total_g_beisbol = total_pich_b * precio_b_u
 
-                conn_gen.close()
             except Exception as e:
                 st.error(f"Error al calcular totales: {e}")
+            finally:
+                cerrar_conexion(conn_gen)
 
         total_ganancias_general = total_g_basket + total_g_beisbol
         total_registros_brutos = total_juegos_b + total_lotes_beisbol
@@ -752,6 +914,46 @@ else:
             })
             st.dataframe(df_desglose, use_container_width=True, hide_index=True)
 
+        st.markdown("---")
+        st.subheader("📈 Evolución Diaria del Periodo")
+        series_diarias = []
+        if not df_b_all.empty:
+            tmp_b = df_b_all.copy()
+            tmp_b["fecha"] = pd.to_datetime(tmp_b["fecha"])
+            series_diarias.append(
+                tmp_b.groupby("fecha").agg({"tarifa": "sum"}).rename(columns={"tarifa": "🏀 Básquetbol ($)"})
+            )
+        if not df_beis_all.empty:
+            tmp_p = df_beis_all.copy()
+            tmp_p["fecha"] = pd.to_datetime(tmp_p["fecha"])
+            tmp_p["usd"] = tmp_p["cantidad"].astype(float) * tasas_cur["precio_beisbol"]
+            series_diarias.append(
+                tmp_p.groupby("fecha").agg({"usd": "sum"}).rename(columns={"usd": "⚾ Béisbol ($)"})
+            )
+        if series_diarias:
+            df_serie = pd.concat(series_diarias, axis=1).fillna(0.0).sort_index()
+            df_serie["Total ($)"] = df_serie.sum(axis=1)
+            fig_serie = px.bar(
+                df_serie,
+                x=df_serie.index,
+                y=[c for c in df_serie.columns if c != "Total ($)"],
+                barmode="stack",
+                color_discrete_sequence=["#00AAFF", "#00FFCC"],
+                labels={"value": "Ingresos (USD)", "x": "Fecha", "variable": "Deporte"},
+            )
+            fig_serie.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                font_color="#E8EFF8", legend_title_text="",
+            )
+            st.plotly_chart(fig_serie, use_container_width=True)
+            st.caption(
+                f"Mejor día: **${df_serie['Total ($)'].max():,.2f}** | "
+                f"Días con actividad: **{len(df_serie)}** | "
+                f"Promedio diario: **${df_serie['Total ($)'].mean():,.2f}**"
+            )
+        else:
+            st.info("Sin movimientos en el periodo seleccionado para graficar la evolución.")
+
         if es_admin and target_user_id == 0:
             st.markdown("---")
             st.subheader("👥 Auditoría General de Operadores en Sistema (Filtrado por Periodo)")
@@ -773,13 +975,38 @@ else:
                         GROUP BY u.id, u.username, u.nombre
                         ORDER BY u.id ASC;
                     """, conn_det, params=(f_ini, f_fin, f_ini, f_fin))
-                    conn_det.close()
-                    
+                    df_tiempos_det = pd.read_sql_query("""
+                        SELECT u.id AS uid, p.tiempo_ejecucion
+                        FROM usuarios u
+                        JOIN partidos p ON u.id = p.usuario_id AND p.fecha BETWEEN %s AND %s;
+                    """, conn_det, params=(f_ini, f_fin))
+
                     if not df_det.empty:
                         df_det["Ganancia Total ($)"] = df_det["USD Basket"] + df_det["USD Béisbol"]
+
+                        promedios_t = {}
+                        if not df_tiempos_det.empty:
+                            for uid, grupo in df_tiempos_det.groupby("uid"):
+                                segs = [
+                                    t for t in (parsear_tiempo_a_segundos(v) for v in grupo["tiempo_ejecucion"])
+                                    if t is not None
+                                ]
+                                promedios_t[uid] = formatear_segundos(sum(segs) / len(segs)) if segs else "—"
+                        df_det["Tiempo Promedio"] = df_det["ID"].map(promedios_t).fillna("—")
+
                         st.dataframe(df_det, use_container_width=True, hide_index=True)
+
+                        csv_det = df_det.to_csv(index=False).encode("utf-8")
+                        st.download_button(
+                            "📥 Exportar Auditoría Consolidada (CSV)",
+                            data=csv_det,
+                            file_name=f"esam_auditoria_{f_ini}_al_{f_fin}.csv",
+                            mime="text/csv",
+                        )
                 except Exception as e:
                     st.error(f"Error cargando detalle de usuarios: {e}")
+                finally:
+                    cerrar_conexion(conn_det)
 
     # =========================================================
     # MÓDULO 1: BÁSQUETBOL (RECÁLCULO RETROACTIVO GARANTIZADO)
@@ -802,48 +1029,11 @@ else:
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
-        
-        hoy = hoy_local()
-        filtro_b_tipo = st.sidebar.selectbox(
-            "Seleccionar Quincena / Periodo:",
-            [
-                "Todos los Registros",
-                "1. 1.ª Quincena (Días 1 al 15)",
-                "2. 2.ª Quincena (Días 16 al final de mes)",
-                "Quincena Anterior",
-                "Este Mes Completo",
-                "Rango de Fechas Personalizado"
-            ],
-            key="b_filtro_sel"
-        )
 
-        if "1. 1.ª Quincena" in filtro_b_tipo:
-            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif "2. 2.ª Quincena" in filtro_b_tipo:
-            f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
-        elif filtro_b_tipo == "Quincena Anterior":
-            if hoy.day <= 15:
-                primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
-                ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-                f_ini, f_fin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
-            else:
-                f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
-        elif filtro_b_tipo == "Este Mes Completo":
-            f_ini = date(hoy.year, hoy.month, 1)
-            if hoy.month == 12:
-                f_fin = date(hoy.year, 12, 31)
-            else:
-                f_fin = date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
-        elif filtro_b_tipo == "Rango de Fechas Personalizado":
-            col_fd1, col_fd2 = st.sidebar.columns(2)
-            with col_fd1: f_ini = st.date_input("Desde", value=hoy_local() - timedelta(days=30), key="b_f_ini")
-            with col_fd2: f_fin = st.date_input("Hasta", value=hoy_local(), key="b_f_fin")
-        else:
-            f_ini = date(2020, 1, 1)
-            f_fin = date(2035, 12, 31)
+        f_ini, f_fin = selector_periodo("basket_periodo", "Seleccionar Periodo:")
 
-        # Ejecutar recálculo automático siempre para garantizar tarifas exactas
-        recalcular_tarifas_quincena_basket(target_b_user_id, f_ini)
+        # Recálculo automático de quincena (una sola vez por sesión)
+        recalcular_si_hace_falta(target_b_user_id, f_ini)
 
         st.info(f"📅 **Periodo Evaluado:** Del **{f_ini.strftime('%d/%m/%Y')}** al **{f_fin.strftime('%d/%m/%Y')}**")
 
@@ -869,26 +1059,43 @@ else:
                 tarifa_calc = tasas_v["tramo_1"]
 
             if st.button("💾 Guardar Partido", use_container_width=True):
+                tiempo_val = (tiempo_p or "").strip()
+                segundos_t = parsear_tiempo_a_segundos(tiempo_val) if tiempo_val else None
                 if not codigo_p.strip():
                     st.warning("Ingrese el código del partido.")
+                elif tiempo_val and segundos_t is None:
+                    st.error("⏱️ Tiempo inválido. Usa el formato HH:MM:SS (ejemplo: 01:42:15).")
                 else:
+                    tiempo_guardar = formatear_segundos(segundos_t) if segundos_t is not None else ""
                     conn_s = get_db_connection()
                     if conn_s:
-                        cur_s = conn_s.cursor()
-                        cur_s.execute("""
-                            INSERT INTO partidos (usuario_id, codigo_partido, fecha, tiempo_ejecucion, tarifa, tipo_partido)
-                            VALUES (%s, %s, %s, %s, %s, %s);
-                        """, (user_id, codigo_p.strip(), fecha_p, tiempo_p.strip(), tarifa_calc, t_guardar))
-                        conn_s.commit()
-                        cur_s.close()
-                        conn_s.close()
-                        
-                        if t_guardar == "quincenal":
-                            recalcular_tarifas_quincena_basket(user_id, fecha_p)
+                        cur_s = None
+                        guardado = False
+                        try:
+                            cur_s = conn_s.cursor()
+                            cur_s.execute("""
+                                INSERT INTO partidos (usuario_id, codigo_partido, fecha, tiempo_ejecucion, tarifa, tipo_partido)
+                                VALUES (%s, %s, %s, %s, %s, %s);
+                            """, (user_id, codigo_p.strip(), fecha_p, tiempo_guardar, tarifa_calc, t_guardar))
+                            conn_s.commit()
+                            guardado = True
+                        except Exception as e:
+                            conn_s.rollback()
+                            st.error(f"❌ No se pudo guardar el partido: {e}")
+                        finally:
+                            try:
+                                if cur_s is not None: cur_s.close()
+                            except Exception:
+                                pass
+                            cerrar_conexion(conn_s)
 
-                        st.cache_data.clear()
-                        st.success("✅ Partido guardado exitosamente.")
-                        st.rerun()
+                        if guardado:
+                            if t_guardar == "quincenal":
+                                recalcular_tarifas_quincena_basket(user_id, fecha_p)
+                            olvidar_recalculos()
+                            st.cache_data.clear()
+                            st.success("✅ Partido guardado exitosamente.")
+                            st.rerun()
 
         conn_q = get_db_connection()
         if conn_q:
@@ -907,7 +1114,7 @@ else:
                     WHERE usuario_id = %s AND fecha BETWEEN %s AND %s
                     ORDER BY fecha DESC, id DESC;
                 """, conn_q, params=(target_b_user_id, f_ini, f_fin))
-            conn_q.close()
+            cerrar_conexion(conn_q)
         else:
             df_basket = pd.DataFrame()
 
@@ -936,35 +1143,63 @@ else:
                         tar_b = st.number_input("Tarifa ($)", value=float(row_b["tarifa"]), step=0.50)
                         
                         if st.form_submit_button("💾 Guardar Correcciones"):
-                            conn_eb = get_db_connection()
-                            if conn_eb:
-                                cur_eb = conn_eb.cursor()
-                                cur_eb.execute("UPDATE partidos SET fecha=%s, codigo_partido=%s, tiempo_ejecucion=%s, tarifa=%s WHERE id=%s;", (fe_b, cod_b, t_b, tar_b, id_edit_b))
-                                conn_eb.commit()
-                                cur_eb.close()
-                                conn_eb.close()
+                            t_b_limpio = (t_b or "").strip()
+                            segs_edit = parsear_tiempo_a_segundos(t_b_limpio) if t_b_limpio else None
+                            if t_b_limpio and segs_edit is None:
+                                st.error("⏱️ Tiempo inválido. Usa el formato HH:MM:SS (ejemplo: 01:42:15).")
+                            else:
+                                tiempo_edit = formatear_segundos(segs_edit) if segs_edit is not None else ""
+                                conn_eb = get_db_connection()
+                                if conn_eb:
+                                    cur_eb = None
+                                    try:
+                                        cur_eb = conn_eb.cursor()
+                                        cur_eb.execute("UPDATE partidos SET fecha=%s, codigo_partido=%s, tiempo_ejecucion=%s, tarifa=%s WHERE id=%s;", (fe_b, cod_b, tiempo_edit, tar_b, id_edit_b))
+                                        conn_eb.commit()
+                                    except Exception as e:
+                                        conn_eb.rollback()
+                                        st.error(f"❌ No se pudo modificar el partido: {e}")
+                                    finally:
+                                        try:
+                                            if cur_eb is not None: cur_eb.close()
+                                        except Exception:
+                                            pass
+                                        cerrar_conexion(conn_eb)
 
-                                recalcular_tarifas_quincena_basket(user_id, fe_b)
-                                st.cache_data.clear()
-                                st.success("✅ Partido modificado y quincena recalculada con éxito.")
-                                st.rerun()
+                                    recalcular_tarifas_quincena_basket(user_id, fe_b)
+                                    olvidar_recalculos()
+                                    st.cache_data.clear()
+                                    st.success("✅ Partido modificado y quincena recalculada con éxito.")
+                                    st.rerun()
 
                 with tab_eb2:
                     id_del_b = st.selectbox("Seleccione el ID del partido a eliminar:", df_basket["id"].tolist(), key="sel_del_b")
-                    if st.button("🚨 Confirmar y Eliminar Partido", use_container_width=True):
+                    confirmo_del_b = st.checkbox("Confirmo que deseo eliminar este partido", key="conf_del_b")
+                    if st.button("🚨 Confirmar y Eliminar Partido", use_container_width=True, disabled=not confirmo_del_b):
                         conn_db = get_db_connection()
                         if conn_db:
-                            cur_db = conn_db.cursor()
-                            cur_db.execute("SELECT fecha FROM partidos WHERE id = %s;", (id_del_b,))
-                            r_f = cur_db.fetchone()
-                            fecha_borrada = r_f[0] if r_f else hoy_local()
+                            cur_db = None
+                            fecha_borrada = hoy_local()
+                            try:
+                                cur_db = conn_db.cursor()
+                                cur_db.execute("SELECT fecha FROM partidos WHERE id = %s;", (id_del_b,))
+                                r_f = cur_db.fetchone()
+                                fecha_borrada = r_f[0] if r_f else hoy_local()
 
-                            cur_db.execute("DELETE FROM partidos WHERE id = %s;", (id_del_b,))
-                            conn_db.commit()
-                            cur_db.close()
-                            conn_db.close()
+                                cur_db.execute("DELETE FROM partidos WHERE id = %s;", (id_del_b,))
+                                conn_db.commit()
+                            except Exception as e:
+                                conn_db.rollback()
+                                st.error(f"❌ No se pudo eliminar el partido: {e}")
+                            finally:
+                                try:
+                                    if cur_db is not None: cur_db.close()
+                                except Exception:
+                                    pass
+                                cerrar_conexion(conn_db)
 
                             recalcular_tarifas_quincena_basket(user_id, fecha_borrada)
+                            olvidar_recalculos()
                             st.cache_data.clear()
                             st.success("🗑️ Partido eliminado correctamente.")
                             st.rerun()
@@ -1000,47 +1235,10 @@ else:
 
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
-        
-        hoy_b = hoy_local()
-        f_tipo_beis = st.sidebar.selectbox(
-            "Seleccionar Quincena / Periodo Béisbol:",
-            [
-                "Todos los Registros",
-                "1. 1.ª Quincena (Días 1 al 15)",
-                "2. 2.ª Quincena (Días 16 al final de mes)",
-                "Quincena Anterior",
-                "Este Mes Completo",
-                "Rango de Fechas Personalizado"
-            ],
-            key="b_beis_filtro"
-        )
 
-        if "1. 1.ª Quincena" in f_tipo_beis:
-            b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
-        elif "2. 2.ª Quincena" in f_tipo_beis:
-            b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=2)
-        elif f_tipo_beis == "Quincena Anterior":
-            if hoy_b.day <= 15:
-                primer_dia_mes_actual = date(hoy_b.year, hoy_b.month, 1)
-                ultimo_dia_mes_pasado = primer_dia_mes_actual - timedelta(days=1)
-                b_fini, b_ffin = obtener_rango_quincena(ultimo_dia_mes_pasado, numero_quincena=2)
-            else:
-                b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
-        elif f_tipo_beis == "Este Mes Completo":
-            b_fini = date(hoy_b.year, hoy_b.month, 1)
-            if hoy_b.month == 12:
-                b_ffin = date(hoy_b.year, 12, 31)
-            else:
-                b_ffin = date(hoy_b.year, hoy_b.month + 1, 1) - timedelta(days=1)
-        elif f_tipo_beis == "Rango de Fechas Personalizado":
-            col_fb1, col_fb2 = st.sidebar.columns(2)
-            with col_fb1: b_fini = st.date_input("Desde", value=hoy_local() - timedelta(days=30), key="beis_ini")
-            with col_fb2: b_ffin = st.date_input("Hasta", value=hoy_local(), key="beis_fin")
-        else:
-            b_fini = date(2020, 1, 1)
-            b_ffin = date(2035, 12, 31)
+        f_ini, f_fin = selector_periodo("beisbol_periodo", "Seleccionar Periodo:")
 
-        st.info(f"📅 **Periodo Evaluado Béisbol:** Del **{b_fini.strftime('%d/%m/%Y')}** al **{b_ffin.strftime('%d/%m/%Y')}**")
+        st.info(f"📅 **Periodo Evaluado Béisbol:** Del **{f_ini.strftime('%d/%m/%Y')}** al **{f_fin.strftime('%d/%m/%Y')}**")
 
         with st.expander("➕ Registrar Lote de Picheos", expanded=False):
             p1, p2, p3 = st.columns(3)
@@ -1075,19 +1273,19 @@ else:
                     JOIN usuarios u ON pi.usuario_id = u.id
                     WHERE pi.fecha BETWEEN %s AND %s
                     ORDER BY pi.fecha DESC, pi.id DESC;
-                """, conn_pb, params=(b_fini, b_ffin))
+                """, conn_pb, params=(f_ini, f_fin))
             else:
                 df_picheos = pd.read_sql_query("""
                     SELECT id, fecha, id_control, cantidad 
                     FROM picheos 
                     WHERE usuario_id = %s AND fecha BETWEEN %s AND %s
                     ORDER BY fecha DESC, id DESC;
-                """, conn_pb, params=(target_beis_user_id, b_fini, b_ffin))
-            conn_pb.close()
+                """, conn_pb, params=(target_beis_user_id, f_ini, f_fin))
+            cerrar_conexion(conn_pb)
         else:
             df_picheos = pd.DataFrame()
 
-        st.markdown(f"### 📋 Listado de Picheos ({b_fini.strftime('%d/%m/%Y')} al {b_ffin.strftime('%d/%m/%Y')})")
+        st.markdown(f"### 📋 Listado de Picheos ({f_ini.strftime('%d/%m/%Y')} al {f_fin.strftime('%d/%m/%Y')})")
         if not df_picheos.empty:
             total_p = df_picheos["cantidad"].sum()
             precio_u = obtener_tasas_globales()["precio_beisbol"]
@@ -1127,23 +1325,33 @@ else:
 
                 with tab_ep2:
                     id_del_p = st.selectbox("Seleccione el ID del lote a eliminar:", df_picheos["id"].tolist(), key="sel_del_p")
-                    if st.button("🚨 Confirmar y Eliminar Lote", use_container_width=True):
+                    confirmo_del_p = st.checkbox("Confirmo que deseo eliminar este lote", key="conf_del_p")
+                    if st.button("🚨 Confirmar y Eliminar Lote", use_container_width=True, disabled=not confirmo_del_p):
                         conn_dp = get_db_connection()
                         if conn_dp:
-                            cur_dp = conn_dp.cursor()
-                            cur_dp.execute("DELETE FROM picheos WHERE id = %s;", (id_del_p,))
-                            conn_dp.commit()
-                            cur_dp.close()
-                            conn_dp.close()
-                            st.cache_data.clear()
-                            st.success("🗑️ Lote de picheos eliminado correctamente.")
-                            st.rerun()
+                            cur_dp = None
+                            try:
+                                cur_dp = conn_dp.cursor()
+                                cur_dp.execute("DELETE FROM picheos WHERE id = %s;", (id_del_p,))
+                                conn_dp.commit()
+                                st.cache_data.clear()
+                                st.success("🗑️ Lote de picheos eliminado correctamente.")
+                                st.rerun()
+                            except Exception as e:
+                                conn_dp.rollback()
+                                st.error(f"❌ No se pudo eliminar el lote: {e}")
+                            finally:
+                                try:
+                                    if cur_dp is not None: cur_dp.close()
+                                except Exception:
+                                    pass
+                                cerrar_conexion(conn_dp)
 
             csv_b = df_picheos.to_csv(index=False).encode("utf-8")
             st.download_button(
                 "📥 Exportar Reporte Quincenal de Béisbol (CSV)",
                 data=csv_b,
-                file_name=f"esam_beisbol_quincena_{b_fini}_al_{b_ffin}.csv",
+                file_name=f"esam_beisbol_quincena_{f_ini}_al_{f_fin}.csv",
                 mime="text/csv"
             )
         else:
@@ -1164,11 +1372,12 @@ else:
             st.subheader("🏀 Tarifas y Tramos de Básquetbol")
             with st.form("form_admin_basket_prices"):
                 st.markdown("##### 📈 Tramos Quincenales (USD por partido):")
-                cb1, cb2, cb3, cb4 = st.columns(4)
+                cb1, cb2, cb3, cb4, cb5 = st.columns(5)
                 with cb1: nt1 = st.number_input("Tramo 1 (1 - 11 partidos)", value=tasas_actuales["tramo_1"], step=0.25)
                 with cb2: nt2 = st.number_input("Tramo 2 (12 - 14 partidos)", value=tasas_actuales["tramo_2"], step=0.25)
-                with cb3: nt3 = st.number_input("Tramo 3 (15 - 29 partidos)", value=tasas_actuales["tramo_3"], step=0.25)
-                with cb4: nt4 = st.number_input("Tramo 4 (30+ partidos)", value=tasas_actuales["tramo_4"], step=0.25)
+                with cb3: nt3 = st.number_input("Tramo 3 (15 - 26 partidos)", value=tasas_actuales["tramo_3"], step=0.25)
+                with cb4: nt4 = st.number_input("Tramo 4 (27 - 29 partidos)", value=tasas_actuales["tramo_4"], step=0.25)
+                with cb5: nt5 = st.number_input("Tramo 5 (30+ partidos)", value=tasas_actuales["tramo_5"], step=0.25)
 
                 st.markdown("---")
                 st.markdown("##### ⚡ Modalidad Especial En Vivo:")
@@ -1182,8 +1391,10 @@ else:
                     actualizar_tasa_global("tasa_tramo_2", nt2)
                     actualizar_tasa_global("tasa_tramo_3", nt3)
                     actualizar_tasa_global("tasa_tramo_4", nt4)
+                    actualizar_tasa_global("tasa_tramo_5", nt5)
                     actualizar_tasa_global("tasa_en_vivo_normal", n_norm)
                     actualizar_tasa_global("tasa_en_vivo_nba", n_nba)
+                    olvidar_recalculos()
                     st.success("✅ Tarifas de Básquetbol actualizadas con éxito.")
                     st.rerun()
 
