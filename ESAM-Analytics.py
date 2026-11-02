@@ -7,6 +7,59 @@ import streamlit as st
 import plotly.express as px
 
 # =========================================================
+# 0. ZONA HORARIA LOCAL (EL SERVIDOR TRABAJA EN UTC)
+# =========================================================
+# El servidor (Streamlit Cloud / Neon) usa UTC. A partir de la noche, en UTC
+# ya es el día siguiente y por eso las cargas quedaban con la fecha de mañana.
+# Aquí se fija el desfase real del operador.
+ZONA_HORARIA_UTC_OFFSET = -4  # Venezuela / Bolivia (UTC-4). Ajusta si cambias de país.
+
+
+def ahora_local():
+    """Fecha y hora local real del operador (UTC + desfase)."""
+    return datetime.utcnow() + timedelta(hours=ZONA_HORARIA_UTC_OFFSET)
+
+
+def hoy_local():
+    """Fecha de HOY según la hora local del operador (nunca la del servidor)."""
+    return ahora_local().date()
+
+
+# =========================================================
+# 0.1 UTILIDADES DE TIEMPO DE PARTIDO (HH:MM:SS)
+# =========================================================
+def parsear_tiempo_a_segundos(valor):
+    """Convierte 'HH:MM:SS', 'MM:SS' o 'SS' a segundos. None si no es válido."""
+    if valor is None or pd.isna(valor):
+        return None
+    texto_val = str(valor).strip()
+    if not texto_val or texto_val.lower() in ("none", "nan", "nat", "null"):
+        return None
+    partes = texto_val.split(":")
+    try:
+        numeros = [int(float(p)) for p in partes]
+    except ValueError:
+        return None
+    if len(numeros) == 3:
+        horas, minutos, segundos = numeros
+    elif len(numeros) == 2:
+        horas, minutos, segundos = 0, numeros[0], numeros[1]
+    elif len(numeros) == 1:
+        horas, minutos, segundos = 0, 0, numeros[0]
+    else:
+        return None
+    return horas * 3600 + minutos * 60 + segundos
+
+
+def formatear_segundos(segundos):
+    """Convierte segundos a texto HH:MM:SS legible."""
+    if segundos is None:
+        return "—"
+    total = int(round(segundos))
+    return f"{total // 3600:02d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+
+
+# =========================================================
 # 1. CONFIGURACIÓN GENERAL DE LA PÁGINA Y ESTILOS VISUALES
 # =========================================================
 st.set_page_config(
@@ -570,14 +623,13 @@ else:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
         
-        hoy = date.today()
+        hoy = hoy_local()
         filtro_gen_tipo = st.sidebar.selectbox(
             "Seleccionar Periodo:",
             [
                 "Todos los Registros",
                 "1. 1.ª Quincena (Días 1 al 15)",
                 "2. 2.ª Quincena (Días 16 al final de mes)",
-                "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
                 "Rango de Fechas Personalizado"
@@ -589,8 +641,6 @@ else:
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
         elif "2. 2.ª Quincena" in filtro_gen_tipo:
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
-        elif filtro_gen_tipo == "Quincena Actual":
-            f_ini, f_fin = obtener_rango_quincena(hoy)
         elif filtro_gen_tipo == "Quincena Anterior":
             if hoy.day <= 15:
                 primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
@@ -606,8 +656,8 @@ else:
                 f_fin = date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
         elif filtro_gen_tipo == "Rango de Fechas Personalizado":
             col_fd1, col_fd2 = st.sidebar.columns(2)
-            with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="gen_f_ini")
-            with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="gen_f_fin")
+            with col_fd1: f_ini = st.date_input("Desde", value=hoy_local() - timedelta(days=30), key="gen_f_ini")
+            with col_fd2: f_fin = st.date_input("Hasta", value=hoy_local(), key="gen_f_fin")
         else:
             f_ini = date(2020, 1, 1)
             f_fin = date(2035, 12, 31)
@@ -623,19 +673,30 @@ else:
         total_juegos_b = 0
         total_lotes_beisbol = 0
         total_pich_b = 0
+        tiempo_promedio_seg = None
+        juegos_con_tiempo = 0
 
         if conn_gen:
             try:
                 if target_user_id == 0:
-                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
+                    df_b_all = pd.read_sql_query("SELECT tarifa, tiempo_ejecucion FROM partidos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
                     df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE fecha BETWEEN %s AND %s;", conn_gen, params=(f_ini, f_fin))
                 else:
-                    df_b_all = pd.read_sql_query("SELECT tarifa FROM partidos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
+                    df_b_all = pd.read_sql_query("SELECT tarifa, tiempo_ejecucion FROM partidos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
                     df_beis_all = pd.read_sql_query("SELECT cantidad FROM picheos WHERE usuario_id = %s AND fecha BETWEEN %s AND %s;", conn_gen, params=(target_user_id, f_ini, f_fin))
 
                 if not df_b_all.empty:
                     total_g_basket = float(df_b_all["tarifa"].sum())
                     total_juegos_b = len(df_b_all)
+
+                    # Tiempo promedio real de los partidos cargados con tiempo
+                    tiempos_b = [
+                        t for t in (parsear_tiempo_a_segundos(v) for v in df_b_all["tiempo_ejecucion"])
+                        if t is not None
+                    ]
+                    if tiempos_b:
+                        tiempo_promedio_seg = sum(tiempos_b) / len(tiempos_b)
+                        juegos_con_tiempo = len(tiempos_b)
 
                 if not df_beis_all.empty:
                     total_pich_b = int(df_beis_all["cantidad"].sum())
@@ -654,11 +715,12 @@ else:
         tasas_cur = obtener_tasas_globales()
 
         # TARJETAS PRINCIPALES
-        col_mg1, col_mg2, col_mg3, col_mg4 = st.columns(4)
+        col_mg1, col_mg2, col_mg3, col_mg4, col_mg5 = st.columns(5)
         col_mg1.metric("💰 Total Acumulado", f"${total_ganancias_general:,.2f}", "📈 Rendimiento Alza")
         col_mg2.metric("🏀 Básquetbol Total", f"${total_g_basket:,.2f}", f"🔺 {total_juegos_b} partidos")
         col_mg3.metric("⚾ Béisbol Total", f"${total_g_beisbol:,.2f}", f"🔺 {total_pich_b:,} picheos")
         col_mg4.metric("📊 Cargas Totales", f"{total_registros_brutos} ops", "🟢 Sistema Óptimo")
+        col_mg5.metric("⏱️ Tiempo Promedio", formatear_segundos(tiempo_promedio_seg), f"⏱️ {juegos_con_tiempo} partidos con tiempo")
 
         st.markdown("---")
         
@@ -741,14 +803,13 @@ else:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
         
-        hoy = date.today()
+        hoy = hoy_local()
         filtro_b_tipo = st.sidebar.selectbox(
             "Seleccionar Quincena / Periodo:",
             [
                 "Todos los Registros",
                 "1. 1.ª Quincena (Días 1 al 15)",
                 "2. 2.ª Quincena (Días 16 al final de mes)",
-                "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
                 "Rango de Fechas Personalizado"
@@ -760,8 +821,6 @@ else:
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=1)
         elif "2. 2.ª Quincena" in filtro_b_tipo:
             f_ini, f_fin = obtener_rango_quincena(hoy, numero_quincena=2)
-        elif filtro_b_tipo == "Quincena Actual":
-            f_ini, f_fin = obtener_rango_quincena(hoy)
         elif filtro_b_tipo == "Quincena Anterior":
             if hoy.day <= 15:
                 primer_dia_mes_actual = date(hoy.year, hoy.month, 1)
@@ -777,8 +836,8 @@ else:
                 f_fin = date(hoy.year, hoy.month + 1, 1) - timedelta(days=1)
         elif filtro_b_tipo == "Rango de Fechas Personalizado":
             col_fd1, col_fd2 = st.sidebar.columns(2)
-            with col_fd1: f_ini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="b_f_ini")
-            with col_fd2: f_fin = st.date_input("Hasta", value=date.today(), key="b_f_fin")
+            with col_fd1: f_ini = st.date_input("Desde", value=hoy_local() - timedelta(days=30), key="b_f_ini")
+            with col_fd2: f_fin = st.date_input("Hasta", value=hoy_local(), key="b_f_fin")
         else:
             f_ini = date(2020, 1, 1)
             f_fin = date(2035, 12, 31)
@@ -794,7 +853,7 @@ else:
                 modalidad_sel = st.radio("Modalidad:", ["🏀 Quincenal Estándar", "⚡ En Vivo Normal", "🔥 En Vivo NBA"])
 
             cf1, cf2, cf3 = st.columns(3)
-            with cf1: fecha_p = st.date_input("Fecha", value=date.today(), key="b_fecha")
+            with cf1: fecha_p = st.date_input("Fecha", value=hoy_local(), key="b_fecha")
             with cf2: codigo_p = st.text_input("Código de Partido", placeholder="Ej: 1042")
             with cf3: tiempo_p = st.text_input("Tiempo Ejecución", placeholder="HH:MM:SS")
 
@@ -898,7 +957,7 @@ else:
                             cur_db = conn_db.cursor()
                             cur_db.execute("SELECT fecha FROM partidos WHERE id = %s;", (id_del_b,))
                             r_f = cur_db.fetchone()
-                            fecha_borrada = r_f[0] if r_f else date.today()
+                            fecha_borrada = r_f[0] if r_f else hoy_local()
 
                             cur_db.execute("DELETE FROM partidos WHERE id = %s;", (id_del_b,))
                             conn_db.commit()
@@ -942,14 +1001,13 @@ else:
         st.sidebar.markdown("---")
         st.sidebar.subheader("🔍 Filtro por Quincena y Periodo")
         
-        hoy_b = date.today()
+        hoy_b = hoy_local()
         f_tipo_beis = st.sidebar.selectbox(
             "Seleccionar Quincena / Periodo Béisbol:",
             [
                 "Todos los Registros",
                 "1. 1.ª Quincena (Días 1 al 15)",
                 "2. 2.ª Quincena (Días 16 al final de mes)",
-                "Quincena Actual",
                 "Quincena Anterior",
                 "Este Mes Completo",
                 "Rango de Fechas Personalizado"
@@ -961,8 +1019,6 @@ else:
             b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=1)
         elif "2. 2.ª Quincena" in f_tipo_beis:
             b_fini, b_ffin = obtener_rango_quincena(hoy_b, numero_quincena=2)
-        elif f_tipo_beis == "Quincena Actual":
-            b_fini, b_ffin = obtener_rango_quincena(hoy_b)
         elif f_tipo_beis == "Quincena Anterior":
             if hoy_b.day <= 15:
                 primer_dia_mes_actual = date(hoy_b.year, hoy_b.month, 1)
@@ -978,8 +1034,8 @@ else:
                 b_ffin = date(hoy_b.year, hoy_b.month + 1, 1) - timedelta(days=1)
         elif f_tipo_beis == "Rango de Fechas Personalizado":
             col_fb1, col_fb2 = st.sidebar.columns(2)
-            with col_fb1: b_fini = st.date_input("Desde", value=date.today() - timedelta(days=30), key="beis_ini")
-            with col_fb2: b_ffin = st.date_input("Hasta", value=date.today(), key="beis_fin")
+            with col_fb1: b_fini = st.date_input("Desde", value=hoy_local() - timedelta(days=30), key="beis_ini")
+            with col_fb2: b_ffin = st.date_input("Hasta", value=hoy_local(), key="beis_fin")
         else:
             b_fini = date(2020, 1, 1)
             b_ffin = date(2035, 12, 31)
@@ -988,7 +1044,7 @@ else:
 
         with st.expander("➕ Registrar Lote de Picheos", expanded=False):
             p1, p2, p3 = st.columns(3)
-            with p1: f_pich = st.date_input("Fecha", value=date.today(), key="p_fich")
+            with p1: f_pich = st.date_input("Fecha", value=hoy_local(), key="p_fich")
             with p2: id_ctrl = st.text_input("ID Control / Partido", placeholder="Ej: BC-2026")
             with p3: cant_pich = st.number_input("Cantidad de Picheos", min_value=1, step=1, value=100)
 
