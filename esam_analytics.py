@@ -462,6 +462,110 @@ a { color: #58C8FF !important; }
     margin: 0 auto;
 }
 
+/* ================= IMPACTO VISUAL (v2) ================= */
+/* Fondo: aurora + rejilla técnica muy sutil */
+[data-testid='stAppViewContainer'] {
+    background-color: #030810 !important;
+    background-image:
+        radial-gradient(1200px 620px at 4% -16%, rgba(0, 170, 255, 0.26), transparent 60%),
+        radial-gradient(1000px 560px at 102% -10%, rgba(118, 92, 255, 0.20), transparent 62%),
+        radial-gradient(900px 520px at 50% 120%, rgba(0, 255, 204, 0.12), transparent 66%),
+        repeating-linear-gradient(0deg, rgba(0, 170, 255, 0.05) 0 1px, transparent 1px 46px),
+        repeating-linear-gradient(90deg, rgba(0, 170, 255, 0.05) 0 1px, transparent 1px 46px) !important;
+}
+
+/* Línea superior luminosa del encabezado */
+[data-testid='stHeader'] { position: relative; }
+[data-testid='stHeader']::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0, 170, 255, 0.65), rgba(0, 255, 204, 0.45), transparent);
+}
+
+/* Tarjetas de métricas con cinta de acento */
+[data-testid='stMetric'] {
+    border-left: 3px solid rgba(0, 170, 255, 0.85) !important;
+    box-shadow: 0 22px 55px -38px rgba(0, 140, 255, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+[data-testid='stMetric']:hover { box-shadow: 0 28px 65px -30px rgba(0, 170, 255, 0.75) !important; }
+
+/* Botones con brillo interno */
+.stButton > button, [data-testid='stFormSubmitButton'] > button {
+    border-radius: 12px !important;
+    box-shadow: 0 14px 34px -18px rgba(0, 170, 255, 1), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+}
+
+/* Pantalla de acceso: panel de vidrio centrado */
+[data-testid='stMainBlockContainer']:has(h1[style*='text-align: center']) h1 {
+    font-size: clamp(2.1rem, 3.4vw, 3rem) !important;
+    letter-spacing: 0.05em !important;
+    border-bottom: none !important;
+    margin-bottom: 0.1rem !important;
+    padding-bottom: 0.2rem !important;
+    filter: drop-shadow(0 0 26px rgba(0, 150, 255, 0.45));
+}
+[data-testid='stMainBlockContainer']:has(h1[style*='text-align: center']) [data-testid='stMarkdownContainer'] p {
+    text-align: center !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.22em !important;
+    font-size: 0.74rem !important;
+    color: #6FA6CC !important;
+    margin-bottom: 1.6rem !important;
+}
+[data-testid='stMainBlockContainer']:has(h1[style*='text-align: center']) [data-testid='stTabs'] {
+    background: linear-gradient(165deg, rgba(10, 26, 46, 0.95) 0%, rgba(5, 14, 28, 0.97) 100%) !important;
+    border: 1px solid rgba(0, 170, 255, 0.22) !important;
+    border-radius: 22px !important;
+    padding: 1.15rem 1.25rem 1.6rem !important;
+    max-width: 620px !important;
+    margin: 0 auto !important;
+    box-shadow: 0 45px 95px -55px rgba(0, 0, 0, 1), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+    backdrop-filter: blur(12px);
+}
+
+/* El texto de los avisos no hereda el estilo del subtítulo de acceso */
+[data-testid='stMainBlockContainer']:has(h1[style*='text-align: center']) [data-testid='stAlert'] p {
+    text-align: left !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+    font-size: 0.92rem !important;
+    color: #D9E8F6 !important;
+    margin-bottom: 0 !important;
+}
+
+/* Texto legible sobre botones y pestaña activa */
+.stButton button p,
+[data-testid='stFormSubmitButton'] button p {
+    color: #FFFFFF !important;
+    opacity: 1 !important;
+    font-family: 'Rajdhani', sans-serif !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.09em !important;
+}
+[data-testid='stDownloadButton'] button p {
+    color: #8FDCFF !important;
+    opacity: 1 !important;
+    font-weight: 700 !important;
+}
+.stTabs [aria-selected='true'] p { color: #FFFFFF !important; opacity: 1 !important; }
+.stTabs [data-baseweb='tab'] p { color: inherit !important; opacity: 1 !important; }
+
+/* El subtítulo del acceso no debe teñir los botones ni las pestañas */
+[data-testid='stMainBlockContainer']:has(h1[style*='text-align: center']) button [data-testid='stMarkdownContainer'] p {
+    color: #FFFFFF !important;
+    -webkit-text-fill-color: #FFFFFF !important;
+    letter-spacing: 0.09em !important;
+    font-size: 0.92rem !important;
+    text-transform: uppercase !important;
+    margin-bottom: 0 !important;
+}
+[data-testid='stMainBlockContainer']:has(h1[style*='text-align: center']) [data-baseweb='tab'][aria-selected='false'] [data-testid='stMarkdownContainer'] p {
+    color: #8FA8C0 !important;
+    -webkit-text-fill-color: #8FA8C0 !important;
+}
+
 /* ================= RESPONSIVE ================= */
 @media (max-width: 900px) {
     .block-container, [data-testid='stMainBlockContainer'] { padding-left: 1rem !important; padding-right: 1rem !important; }
